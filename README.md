@@ -43,13 +43,28 @@ Step 5: Elevated review process (conducted by Deputy CIO) for requests that stak
 
 Exception: If there is a Master Equipment Agreement (MEA) through Chancellor's Office, the review process is bypassed and the Chancellor's Office handles approval.
 
+## Project Objectives
+
+- Transform a reactive, memory-dependent software request workflow into a proactive, data-driven governance model with consistent standards
+- Enable structuring of historical review outcomes and contracts into a searchable "institutional memory" that surfaces prior findings, precedents, duplicates, and existing licenses
+- Improve the experience for requesters (faculty/staff) with transparency into status and alternatives, and for reviewers by automating repetitive validation
+- Reduce average review cycle time, decrease redundant evaluations, and increase utilization of existing licensed software
+- Leave room to enhance individual sub-processes (Security, ATI, Integration) and track California-required autonomous decision systems at intake
+
 ### Opportunity: AI-Powered Software Request Agent
 
 The goal is to build an AI-powered agent that can enhance and accelerate this workflow by structuring historical review outcomes and contracts into a searchable institutional memory.
 
+#### Ideal Solution Vision:
+
+An AI-powered "Software Request Agent" that functions as an interview/chat intake plus reviewer force-multiplier, optionally interfacing with ServiceNow (via a Jira-style external workflow) with a status/metrics view.
+
+Example scenario: A requester submits software that is already licensed on campus. The agent instantly flags the existing license or approved alternative and surfaces prior review findings, avoiding a full re-review. This addresses redundant evaluations and improves discoverability.
+
 #### For Requesters:
 - Immediate transparency showing existing licenses, campus-approved alternatives, and current status in the workflow
 - Visibility into the 5 review steps and estimated time to completion to reduce follow-up traffic
+- Faster turnaround time by avoiding duplicate reviews
 
 #### For Reviewers:
 - AI agent acts as a force multiplier, instantly surfacing historical findings, prior review outcomes, and relevant precedents
@@ -65,6 +80,7 @@ The goal is to build an AI-powered agent that can enhance and accelerate this wo
 - Provide decision support by checking vendor risk profiles, incident history, certifications
 - Generate transparency metrics and status summaries
 - Support tracking of autonomous decision systems at intake
+- Extensible design to enhance individual sub-processes without full rewrite
 
 ### Success Metrics
 
