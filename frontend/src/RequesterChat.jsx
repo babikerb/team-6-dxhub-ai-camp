@@ -1,5 +1,7 @@
-import React, { useState, useRef, useEffect, useMemo } from "react";
+import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { converseTurn, assistText, PARSEABLE, ASSISTED_TEXT } from "./chatbotParse.js";
+import { getRequest, submitChatbotReview } from "./api.js";
+import { answersToItReview } from "./itReview.js";
 
 // -----------------------------------------------------------------
 // MASTER QUESTION LIST (Part B)
@@ -7,6 +9,8 @@ import { converseTurn, assistText, PARSEABLE, ASSISTED_TEXT } from "./chatbotPar
 // type: "text" | "choice" | "multiselect",
 // options (for choice/multiselect),
 // skip(answers) -> true if this step should be skipped given answers so far
+// software_name / scope_of_usage are skipped when already present from
+// the intake form (pre-seeded into answers on load).
 // -----------------------------------------------------------------
 const STEPS = [
   {
@@ -15,6 +19,7 @@ const STEPS = [
     bot: "What's the name of the software you're requesting?",
     type: "text",
     placeholder: "e.g. Zoom, Adobe Creative Cloud",
+    skip: (a) => Boolean(a.software_name),
   },
   {
     id: "scope_of_usage",
@@ -27,6 +32,7 @@ const STEPS = [
       { label: "One department or office", value: "Department" },
       { label: "An entire college or the whole university", value: "University" },
     ],
+    skip: (a) => Boolean(a.scope_of_usage),
   },
   {
     id: "estimated_users",
@@ -42,51 +48,53 @@ const STEPS = [
   {
     id: "interaction_method",
     label: "Access",
-    bot: "Will people mainly use it on a computer, a phone or tablet, through a web browser, or a mix? Select all that apply.",
+    bot: "How will people access it? Select all that apply.",
     type: "multiselect",
     options: [
-      { label: "Computer", value: "computer" },
-      { label: "Phone or tablet", value: "mobile" },
-      { label: "Web browser", value: "browser" },
+      { label: "Installed on a computer", value: "computer" },
+      { label: "A mobile app", value: "mobile" },
+      { label: "Through a web browser", value: "browser" },
+      { label: "Not sure yet", value: "not sure" },
     ],
   },
   {
     id: "software_category",
     label: "Hosting",
-    bot: "Where does this software actually run?",
+    bot: "Where does the software actually run?",
     type: "choice",
     options: [
-      { label: "Installed by IT on a campus server", value: "onprem-datacenter" },
-      { label: "Installed on your own computer", value: "onprem-local" },
-      { label: "Something you log into online (a website/cloud app)", value: "cloud" },
-      { label: "A small add-on inside another app you already use", value: "addon" },
+      { label: "On SDSU's own servers (data center)", value: "onprem-datacenter" },
+      { label: "Installed locally on a device", value: "onprem-local" },
+      { label: "In the cloud (a vendor's website/platform)", value: "cloud" },
+      { label: "It's a plug-in / add-on to something we already use", value: "addon" },
     ],
   },
   {
     id: "shares_data_with_campus_system",
     label: "Integration",
-    bot: "Will this software need to send or receive information with any other SDSU system, like Canvas, Oracle, or PeopleSoft/mySDSU?",
+    bot: "Will this software need to send or receive data from other SDSU systems — like class rosters, email, or student records?",
     type: "choice",
     options: [
       { label: "Yes", value: "yes" },
       { label: "No", value: "no" },
+      { label: "Not sure", value: "unsure" },
     ],
   },
   {
     id: "integration_explanation",
     label: "Integration",
-    bot: "Which system(s), and what kind of information would be shared?",
+    bot: "Briefly, what data does it exchange, and with which SDSU system?",
     type: "text",
-    placeholder: "e.g. Canvas — class roster and grades",
+    placeholder: "e.g. rosters from Canvas via LTI",
     skip: (a) => a.shares_data_with_campus_system !== "yes",
   },
   {
     id: "sso_capable",
     label: "Login",
-    bot: "Can people log in with their regular SDSUid — the same login as other campus systems — or does it use a separate username/password?",
+    bot: "Can people log in with their SDSU account (single sign-on), or does it need a separate username/password?",
     type: "choice",
     options: [
-      { label: "Yes, uses SDSUid", value: "yes" },
+      { label: "Yes, SDSU single sign-on", value: "yes" },
       { label: "No, separate login", value: "no" },
       { label: "Not sure", value: "unsure" },
     ],
@@ -124,11 +132,11 @@ const STEPS = [
     ],
     skip: (a) => a.ai_capabilities !== "yes",
   },
-  // Block A — always asked
+  // Data & compliance — Block A (always asked)
   {
     id: "la_health",
     label: "Data",
-    bot: "Will it handle health or medical information — the kind a doctor's office or student health center would keep?",
+    bot: "Will it ever store or handle health records (HIPAA-covered information)?",
     type: "choice",
     options: [
       { label: "Yes", value: "yes" },
@@ -138,7 +146,7 @@ const STEPS = [
   {
     id: "la_pii",
     label: "Data",
-    bot: "Will it store personal ID details like Social Security numbers, driver's license numbers, or dates of birth?",
+    bot: "Will it store personal identifiers like Social Security numbers, driver's license, or passport numbers?",
     type: "choice",
     options: [
       { label: "Yes", value: "yes" },
@@ -148,7 +156,7 @@ const STEPS = [
   {
     id: "la_payment",
     label: "Data",
-    bot: "Will it process credit card payments or store banking/payment information?",
+    bot: "Will it process credit card, banking, or other payment/financial account details?",
     type: "choice",
     options: [
       { label: "Yes", value: "yes" },
@@ -158,18 +166,18 @@ const STEPS = [
   {
     id: "la_lawenforcement",
     label: "Data",
-    bot: "Will it store or access law enforcement or campus police records?",
+    bot: "Will it store law enforcement or background-check records?",
     type: "choice",
     options: [
       { label: "Yes", value: "yes" },
       { label: "No", value: "no" },
     ],
   },
-  // Block B — only asked if Block A was all "no"
+  // Data & compliance — Block B (only if every Block A question was "no")
   {
     id: "lb_coursework",
     label: "Data",
-    bot: "Will students use this for coursework, grading, or advising?",
+    bot: "Will it involve student education records — grades, coursework, enrollment (FERPA)?",
     type: "choice",
     options: [
       { label: "Yes", value: "yes" },
@@ -181,7 +189,7 @@ const STEPS = [
   {
     id: "lb_employee",
     label: "Data",
-    bot: "Will it store employee info — personnel files, salaries, performance reviews?",
+    bot: "Will it involve employee information — HR records, payroll, performance reviews?",
     type: "choice",
     options: [
       { label: "Yes", value: "yes" },
@@ -193,7 +201,7 @@ const STEPS = [
   {
     id: "lb_budget",
     label: "Data",
-    bot: "Will it access campus budgets or internal financial records (not card payments)?",
+    bot: "Will it involve SDSU financial or budget data?",
     type: "choice",
     options: [
       { label: "Yes", value: "yes" },
@@ -254,82 +262,18 @@ function visibleSteps(answers) {
   return STEPS.filter((s) => !(s.skip && s.skip(answers)));
 }
 
-// -----------------------------------------------------------------
-// PART C — flag computation logic (mirrors the Python spec exactly)
-// Computed silently. Never rendered to the requester — staff/admin only.
-// -----------------------------------------------------------------
-export function evaluate(a) {
-  const scopeQualifies = a.scope_of_usage === "Classroom" || a.scope_of_usage === "University";
-  const highUsers = a.estimated_users === "30-100" || a.estimated_users === "100+";
-  const ati_flag = highUsers && scopeQualifies;
-  const ati_flag_reason = `${a.estimated_users} users, ${a.scope_of_usage} scope`;
-
-  const blockA = {
-    HIPAA: a.la_health === "yes",
-    PII: a.la_pii === "yes",
-    "PCI DSS / GLBA": a.la_payment === "yes",
-    "Law Enforcement Records": a.la_lawenforcement === "yes",
-  };
-  const blockATriggered = Object.keys(blockA).filter((k) => blockA[k]);
-
-  const blockB = {
-    FERPA: a.lb_coursework === "yes",
-    "Employee Information": a.lb_employee === "yes",
-    Financials: a.lb_budget === "yes",
-    "Research/IP": a.lb_research === "yes",
-    "Attorney-client": a.lb_legal === "yes",
-  };
-  const blockBTriggered = Object.keys(blockB).filter((k) => blockB[k]);
-
-  let risk_level, security_flag, security_flag_reason;
-  if (blockATriggered.length > 0) {
-    risk_level = "High";
-    security_flag = true;
-    security_flag_reason = "Level 1 data: " + blockATriggered.join(", ");
-  } else if (blockBTriggered.length > 0) {
-    risk_level = "Medium";
-    security_flag = true;
-    security_flag_reason = "Level 2 data: " + blockBTriggered.join(", ");
-  } else {
-    risk_level = "Low";
-    security_flag = false;
-    security_flag_reason = "No Level 1 or Level 2 data identified";
+function findFirstStepIndex(answers) {
+  let i = 0;
+  while (i < STEPS.length && STEPS[i].skip && STEPS[i].skip(answers)) {
+    i++;
   }
-
-  const integration_flag = a.shares_data_with_campus_system === "yes";
-  const integration_flag_reason =
-    a.integration_explanation || (integration_flag ? "Shares data with another campus system" : null);
-
-  // AI / Automated Decision System tracking (California AB 302). ai_flag marks
-  // any AI-enabled software; the reason calls out the high-risk ADS subset
-  // (used to make decisions about people) that goes on the state inventory.
-  const ai_flag = a.ai_capabilities === "yes";
-  let ai_flag_reason;
-  if (a.ai_automated_decisions === "yes") {
-    ai_flag_reason = "AI-enabled automated decision system — California ADS inventory (AB 302)";
-  } else if (ai_flag) {
-    ai_flag_reason = "AI-enabled software";
-  } else {
-    ai_flag_reason = "No AI capabilities reported";
-  }
-
-  return {
-    ati_flag,
-    ati_flag_reason,
-    security_flag,
-    security_flag_reason,
-    risk_level,
-    integration_flag,
-    integration_flag_reason,
-    ai_flag,
-    ai_flag_reason,
-  };
+  return i;
 }
 
 function RequesterChat({ requestId }) {
   const [answers, setAnswers] = useState({});
-  const [log, setLog] = useState([{ from: "bot", label: STEPS[0].label, text: STEPS[0].bot }]);
-  const [stepIndex, setStepIndex] = useState(0); // index into full STEPS array
+  const [log, setLog] = useState([]);
+  const [stepIndex, setStepIndex] = useState(0);
   const [textInput, setTextInput] = useState("");
   const [multiSelected, setMultiSelected] = useState([]);
   const [done, setDone] = useState(false);
@@ -338,17 +282,108 @@ function RequesterChat({ requestId }) {
   const [pending, setPending] = useState(null);        // {value,label} awaiting confirm
   const [revealButtons, setRevealButtons] = useState(false); // model laid out options
   const [convo, setConvo] = useState([]);              // per-question turn history
+  // Backend load/persist state:
+  const [loading, setLoading] = useState(Boolean(requestId));
+  const [loadError, setLoadError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
+  const [pendingAnswers, setPendingAnswers] = useState(null);
   const scrollRef = useRef(null);
+
+  const persistReview = useCallback(
+    async (finalAnswers) => {
+      if (!requestId) {
+        setDone(true);
+        return;
+      }
+      setSubmitting(true);
+      setSubmitError(null);
+      try {
+        const it_review = answersToItReview(finalAnswers);
+        await submitChatbotReview(requestId, it_review);
+        setPendingAnswers(null);
+        setDone(true);
+        setLog((l) => {
+          const already = l.some((e) => e.label === "Submitted");
+          if (already) return l;
+          return [
+            ...l,
+            {
+              from: "bot",
+              label: "Submitted",
+              text: "Thanks — that's everything I need. Your request has been submitted for IT Review.",
+            },
+          ];
+        });
+      } catch (err) {
+        setPendingAnswers(finalAnswers);
+        setSubmitError(err.message || "Could not save your answers. Please try again.");
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [requestId]
+  );
+
+  // Load the intake record once per requestId, pre-seeding software_name /
+  // scope_of_usage so we don't ask what the intake form already collected.
+  // Important: do NOT gate on a "bootstrapped" ref — React Strict Mode
+  // runs effect → cleanup → effect again on the same instance, which would
+  // leave loading stuck forever after cancelling the first fetch.
+  useEffect(() => {
+    if (!requestId) {
+      setLog([{ from: "bot", label: STEPS[0].label, text: STEPS[0].bot }]);
+      setStepIndex(0);
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    setLoadError(null);
+
+    (async () => {
+      try {
+        const record = await getRequest(requestId);
+        if (cancelled) return;
+        const requestor = record.requestor || {};
+        const seeded = {
+          software_name: requestor.software_name || undefined,
+          scope_of_usage: requestor.scope_of_usage || undefined,
+        };
+        Object.keys(seeded).forEach((k) => seeded[k] === undefined && delete seeded[k]);
+
+        const startIndex = findFirstStepIndex(seeded);
+        setAnswers(seeded);
+        setStepIndex(startIndex);
+        if (startIndex < STEPS.length) {
+          setLog([{ from: "bot", label: STEPS[startIndex].label, text: STEPS[startIndex].bot }]);
+        } else if (!cancelled) {
+          await persistReview(seeded);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setLoadError(err.message || "Could not load this request.");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [requestId, persistReview]);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
     }
-  }, [log]);
+  }, [log, submitError]);
 
   const currentStep = STEPS[stepIndex];
   const visible = useMemo(() => visibleSteps(answers), [answers]);
-  const visiblePosition = visible.findIndex((s) => s.id === currentStep.id);
+  const visiblePosition = currentStep ? visible.findIndex((s) => s.id === currentStep.id) : -1;
 
   function findNextIndex(fromIndex, updatedAnswers) {
     let i = fromIndex + 1;
@@ -369,18 +404,7 @@ function RequesterChat({ requestId }) {
       setStepIndex(index);
       setMultiSelected([]);
     } else {
-      setLog((l) => [
-        ...l,
-        {
-          from: "bot",
-          label: "Submitted",
-          text: "Thanks — that's everything I need. Your request has been submitted for IT Review.",
-        },
-      ]);
-      // Flags are computed here for the reviewer dashboard, but intentionally never shown to the requester.
-      const flags = evaluate(updatedAnswers);
-      console.log("Computed flags (staff/admin only):", flags);
-      setDone(true);
+      persistReview(updatedAnswers);
     }
   }
 
@@ -392,6 +416,7 @@ function RequesterChat({ requestId }) {
   }
 
   function advance(value, displayText) {
+    if (submitting) return;
     setLog((l) => [...l, { from: "user", text: displayText }]);
     commitAnswer(value);
   }
@@ -513,6 +538,41 @@ function RequesterChat({ requestId }) {
 
   const totalVisible = visible.length;
 
+  if (loading) {
+    return (
+      <div style={styles.page}>
+        <div style={styles.card}>
+          <div style={styles.masthead}>
+            <div style={styles.badge}>SDSU</div>
+            <div>
+              <div style={styles.headline}>Software Request Assistant</div>
+              <div style={styles.ticketRow}>
+                {requestId ? `Request #${requestId.slice(0, 8)}` : "IT Review intake"}
+              </div>
+            </div>
+          </div>
+          <div style={styles.footer}>Loading your request…</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div style={styles.page}>
+        <div style={styles.card}>
+          <div style={styles.masthead}>
+            <div style={styles.badge}>SDSU</div>
+            <div>
+              <div style={styles.headline}>Software Request Assistant</div>
+            </div>
+          </div>
+          <div style={{ ...styles.footer, color: "var(--red)" }}>{loadError}</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={styles.page}>
       <div style={styles.card}>
@@ -528,7 +588,7 @@ function RequesterChat({ requestId }) {
         </div>
 
         {/* Step sequence */}
-        {!done && (
+        {!done && currentStep && (
           <React.Fragment>
             <div style={styles.dotsWrap}>
               {visible.map((s, i) => (
@@ -578,7 +638,20 @@ function RequesterChat({ requestId }) {
         </div>
 
         {/* Input */}
-        {!done ? (
+        {submitting ? (
+          <div style={styles.footer}>Saving your answers…</div>
+        ) : submitError ? (
+          <div style={styles.errorWrap}>
+            <div style={styles.errorText}>{submitError}</div>
+            <button
+              style={styles.textSubmit}
+              onClick={() => persistReview(pendingAnswers || answers)}
+              type="button"
+            >
+              Try again
+            </button>
+          </div>
+        ) : !done && currentStep ? (
           pending ? (
             <div style={styles.choiceList}>
               <button style={styles.choiceRow} onClick={confirmYes}>
@@ -735,100 +808,89 @@ const styles = {
     color: "#fff",
   },
   ticketRow: {
-    marginTop: "3px",
     fontFamily: "'IBM Plex Mono', monospace",
-    fontSize: "11.5px",
-    color: "var(--stone-light)",
+    fontSize: "11px",
+    color: "rgba(255,255,255,0.6)",
+    marginTop: "2px",
   },
   dotsWrap: {
     display: "flex",
     alignItems: "center",
-    padding: "18px 28px 0",
+    padding: "16px 28px 0",
   },
-  dotUnit: { display: "flex", alignItems: "center", flex: 1 },
+  dotUnit: {
+    display: "flex",
+    alignItems: "center",
+    flex: 1,
+  },
   dot: {
     width: "9px",
     height: "9px",
     borderRadius: "50%",
-    border: "1.5px solid var(--line)",
+    border: "2px solid var(--line)",
     flexShrink: 0,
-    transition: "background 0.25s ease, border-color 0.25s ease",
   },
   dotLine: {
+    height: "2px",
     flex: 1,
-    height: "1.5px",
-    marginLeft: "2px",
-    marginRight: "2px",
     background: "var(--line)",
-    transition: "background 0.25s ease",
   },
   stepCaption: {
-    padding: "8px 28px 18px",
-    fontFamily: "'IBM Plex Mono', monospace",
-    fontSize: "11px",
-    color: "var(--stone)",
-    letterSpacing: "0.02em",
-  },
-  log: {
-    padding: "0 28px",
-    maxHeight: "420px",
-    overflowY: "auto",
-    display: "flex",
-    flexDirection: "column",
-    gap: "18px",
-    paddingBottom: "22px",
-    paddingTop: "18px",
-  },
-  botEntry: {
-    display: "flex",
-    gap: "12px",
-  },
-  botRule: {
-    width: "2.5px",
-    background: "var(--red)",
-    borderRadius: "2px",
-    flexShrink: 0,
-  },
-  botLabel: {
-    fontFamily: "'IBM Plex Mono', monospace",
-    fontSize: "10px",
-    letterSpacing: "0.08em",
-    textTransform: "uppercase",
-    color: "var(--red)",
-    marginBottom: "4px",
-  },
-  botText: {
-    fontSize: "15px",
-    lineHeight: 1.5,
-    color: "var(--ink)",
-    whiteSpace: "pre-wrap",
-  },
-  orChoose: {
-    padding: "14px 28px 6px",
     fontFamily: "'IBM Plex Mono', monospace",
     fontSize: "10.5px",
     letterSpacing: "0.06em",
     textTransform: "uppercase",
     color: "var(--stone)",
-    borderTop: "1px solid var(--line)",
+    padding: "8px 28px 14px",
+  },
+  log: {
+    maxHeight: "360px",
+    overflowY: "auto",
+    padding: "16px 28px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "16px",
+  },
+  botEntry: {
+    display: "flex",
+    gap: "10px",
+  },
+  botRule: {
+    width: "3px",
+    borderRadius: "2px",
+    background: "var(--red)",
+    flexShrink: 0,
+  },
+  botLabel: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "10px",
+    letterSpacing: "0.06em",
+    textTransform: "uppercase",
+    color: "var(--stone)",
+    marginBottom: "3px",
+  },
+  botText: {
+    fontSize: "14.5px",
+    lineHeight: 1.5,
+    color: "var(--ink)",
   },
   userEntryWrap: {
     display: "flex",
     justifyContent: "flex-end",
   },
   userEntry: {
-    fontFamily: "'IBM Plex Mono', monospace",
-    fontSize: "13px",
-    color: "var(--ink)",
-    background: "var(--paper-alt)",
-    border: "1px solid var(--line)",
-    padding: "6px 12px",
+    background: "var(--ink)",
+    color: "#fff",
+    padding: "9px 14px",
+    borderRadius: "10px 10px 2px 10px",
+    fontSize: "14px",
     maxWidth: "78%",
+    lineHeight: 1.4,
   },
   choiceList: {
-    borderTop: "1px solid var(--line)",
     display: "flex",
     flexDirection: "column",
+    borderTop: "1px solid var(--line)",
   },
   choiceRow: {
     display: "flex",
@@ -843,48 +905,71 @@ const styles = {
     color: "var(--ink)",
     cursor: "pointer",
     textAlign: "left",
-    transition: "border-left-color 0.15s ease, background 0.15s ease",
-    fontFamily: "inherit",
+    transition: "border-color 0.15s ease",
   },
   choiceMark: {
     color: "var(--red)",
     fontSize: "14px",
-    opacity: 0.7,
   },
-  multiWrap: { display: "flex", flexDirection: "column" },
+  multiWrap: {
+    borderTop: "1px solid var(--line)",
+  },
   textRow: {
     display: "flex",
-    alignItems: "center",
-    gap: "14px",
-    padding: "18px 28px 24px",
+    gap: "10px",
+    padding: "16px 28px",
     borderTop: "1px solid var(--line)",
   },
   textField: {
     flex: 1,
-    border: "none",
-    borderBottom: "1.5px solid var(--stone-light)",
-    background: "transparent",
-    fontSize: "15px",
-    padding: "6px 2px",
-    fontFamily: "'IBM Plex Sans', sans-serif",
-    color: "var(--ink)",
+    padding: "10px 14px",
+    borderRadius: "8px",
+    border: "1.5px solid var(--line)",
+    fontSize: "14px",
+    outline: "none",
+    boxSizing: "border-box",
+    fontFamily: "inherit",
   },
   textSubmit: {
-    border: "1px solid var(--ink)",
+    padding: "10px 18px",
+    borderRadius: "8px",
+    border: "none",
     background: "var(--ink)",
     color: "#fff",
-    fontSize: "12.5px",
-    letterSpacing: "0.04em",
-    padding: "9px 16px",
+    fontWeight: 700,
+    fontSize: "13px",
     cursor: "pointer",
-    fontFamily: "'IBM Plex Mono', monospace",
   },
   footer: {
+    padding: "22px 28px",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "12px",
+    color: "var(--stone)",
+    textAlign: "center",
+    borderTop: "1px solid var(--line)",
+    whiteSpace: "pre-wrap",
+  },
+  orChoose: {
+    padding: "14px 28px 6px",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "10.5px",
+    letterSpacing: "0.06em",
+    textTransform: "uppercase",
+    color: "var(--stone)",
+    borderTop: "1px solid var(--line)",
+  },
+  errorWrap: {
     padding: "16px 28px 22px",
     borderTop: "1px solid var(--line)",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "12px",
+  },
+  errorText: {
     fontFamily: "'IBM Plex Mono', monospace",
-    fontSize: "11px",
-    color: "var(--stone)",
+    fontSize: "12px",
+    color: "var(--red)",
     textAlign: "center",
   },
 };
