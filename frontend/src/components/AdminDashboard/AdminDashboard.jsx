@@ -2,40 +2,40 @@ import { useState } from "react";
 import { MOCK_REQUESTS } from "./mockData.js";
 import RequestDetail from "./RequestDetail.jsx";
 
-// ── Color tokens (matches RequesterChat.jsx palette) ──────────────────────────
+// ── Design tokens (matches RequesterChat.jsx / IntakeForm.jsx palette + type system) ──
 const C = {
-  red: "#C8102E",
-  dark: "#1A1A1A",
-  darkGrey: "#3A3A3A",
+  ink: "var(--ink)",
+  red: "var(--red)",
+  redDark: "var(--red-dark)",
+  paper: "var(--paper)",
+  paperAlt: "var(--paper-alt)",
+  line: "var(--line)",
+  stone: "var(--stone)",
+  stoneLight: "var(--stone-light)",
   white: "#ffffff",
-  pageBg: "#F2F2F2",
-  cardBg: "#ffffff",
-  lightGrey: "#FAFAFA",
-  borderGrey: "#EDEDED",
-  inputBorder: "#DDD",
-  mutedText: "#666",
-  subtleText: "#B3B3B3",
-  font: "'Segoe UI', Arial, sans-serif",
+  sans: "'IBM Plex Sans', sans-serif",
+  mono: "'IBM Plex Mono', monospace",
+  serif: "'Source Serif 4', serif",
 };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function riskColor(level) {
   if (level === "High") return C.red;
-  if (level === "Medium") return "#E87C00";
-  return C.darkGrey;
+  if (level === "Medium") return "#B5650B";
+  return C.stone;
 }
 
 function statusColor(status) {
   const map = {
     Submitted: "#1565C0",
     ChatbotInProgress: "#6A1B9A",
-    FlagsComputed: "#E87C00",
+    FlagsComputed: "#B5650B",
     UnderStaffReview: C.red,
     Approved: "#2E7D32",
-    Denied: C.darkGrey,
+    Denied: C.stone,
   };
-  return map[status] || C.darkGrey;
+  return map[status] || C.stone;
 }
 
 function FlagPill({ value, label }) {
@@ -45,11 +45,14 @@ function FlagPill({ value, label }) {
       style={{
         display: "inline-block",
         padding: "2px 8px",
-        borderRadius: "999px",
-        fontSize: "11px",
+        borderRadius: "3px",
+        fontFamily: C.mono,
+        fontSize: "10.5px",
         fontWeight: 700,
-        background: active ? C.red : C.borderGrey,
-        color: active ? C.white : C.mutedText,
+        letterSpacing: "0.04em",
+        background: active ? C.red : "transparent",
+        color: active ? C.white : C.stoneLight,
+        border: active ? "none" : `1px solid ${C.line}`,
         marginRight: "4px",
       }}
     >
@@ -63,10 +66,13 @@ function Badge({ label, color }) {
     <span
       style={{
         display: "inline-block",
-        padding: "2px 10px",
-        borderRadius: "999px",
-        fontSize: "11px",
+        padding: "3px 10px",
+        borderRadius: "3px",
+        fontFamily: C.mono,
+        fontSize: "10.5px",
         fontWeight: 700,
+        letterSpacing: "0.04em",
+        textTransform: "uppercase",
         background: color,
         color: C.white,
       }}
@@ -91,6 +97,7 @@ export default function AdminDashboard() {
   // In Phase 2 swap this for a real fetch from GET /requests
   const [requests, setRequests] = useState(MOCK_REQUESTS);
   const [selectedId, setSelectedId] = useState(null);
+  const [hoveredId, setHoveredId] = useState(null);
 
   // Filters
   const [filterStatus, setFilterStatus] = useState("");
@@ -132,7 +139,7 @@ export default function AdminDashboard() {
 
   return (
     <div style={styles.page}>
-      {/* ── Header ── */}
+      {/* ── Masthead ── */}
       <div style={styles.header}>
         <div style={styles.headerBadge}>SDSU</div>
         <div>
@@ -216,7 +223,7 @@ export default function AdminDashboard() {
         <div style={styles.tableWrapper}>
           <table style={styles.table}>
             <thead>
-              <tr style={styles.thead}>
+              <tr>
                 <th style={styles.th}>Software</th>
                 <th style={styles.th}>Requestor</th>
                 <th style={styles.th}>Department</th>
@@ -233,45 +240,51 @@ export default function AdminDashboard() {
                   </td>
                 </tr>
               ) : (
-                filtered.map((r) => (
-                  <tr
-                    key={r.request_id}
-                    style={{
-                      ...styles.tr,
-                      background:
-                        selectedId === r.request_id ? "#FFF5F7" : C.white,
-                    }}
-                    onClick={() => setSelectedId(r.request_id)}
-                  >
-                    <td style={{ ...styles.td, fontWeight: 600 }}>
-                      {r.requestor.software_name}
-                    </td>
-                    <td style={styles.td}>
-                      <div>{r.requestor.requested_for_name}</div>
-                      <div style={{ fontSize: "11px", color: C.mutedText }}>
-                        {r.requestor.requested_for_email}
-                      </div>
-                    </td>
-                    <td style={styles.td}>{r.requestor.department}</td>
-                    <td style={styles.td}>
-                      <Badge
-                        label={r.status}
-                        color={statusColor(r.status)}
-                      />
-                    </td>
-                    <td style={styles.td}>
-                      <FlagPill value={r.flags.ati_flag} label="ATI" />
-                      <FlagPill value={r.flags.security_flag} label="SEC" />
-                      <FlagPill value={r.flags.integration_flag} label="INT" />
-                    </td>
-                    <td style={styles.td}>
-                      <Badge
-                        label={r.flags.risk_level}
-                        color={riskColor(r.flags.risk_level)}
-                      />
-                    </td>
-                  </tr>
-                ))
+                filtered.map((r) => {
+                  const active = selectedId === r.request_id || hoveredId === r.request_id;
+                  return (
+                    <tr
+                      key={r.request_id}
+                      style={{
+                        ...styles.tr,
+                        borderLeftColor: active ? C.red : "transparent",
+                        background:
+                          selectedId === r.request_id ? "rgba(200, 16, 46, 0.05)" : C.white,
+                      }}
+                      onClick={() => setSelectedId(r.request_id)}
+                      onMouseEnter={() => setHoveredId(r.request_id)}
+                      onMouseLeave={() => setHoveredId(null)}
+                    >
+                      <td style={{ ...styles.td, fontWeight: 600 }}>
+                        {r.requestor.software_name}
+                      </td>
+                      <td style={styles.td}>
+                        <div>{r.requestor.requested_for_name}</div>
+                        <div style={styles.tdSub}>
+                          {r.requestor.requested_for_email}
+                        </div>
+                      </td>
+                      <td style={styles.td}>{r.requestor.department}</td>
+                      <td style={styles.td}>
+                        <Badge
+                          label={r.status}
+                          color={statusColor(r.status)}
+                        />
+                      </td>
+                      <td style={styles.td}>
+                        <FlagPill value={r.flags.ati_flag} label="ATI" />
+                        <FlagPill value={r.flags.security_flag} label="SEC" />
+                        <FlagPill value={r.flags.integration_flag} label="INT" />
+                      </td>
+                      <td style={styles.td}>
+                        <Badge
+                          label={r.flags.risk_level}
+                          color={riskColor(r.flags.risk_level)}
+                        />
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
@@ -294,113 +307,139 @@ export default function AdminDashboard() {
 const styles = {
   page: {
     minHeight: "100vh",
-    background: C.pageBg,
-    fontFamily: C.font,
+    fontFamily: C.sans,
+    color: C.ink,
   },
   header: {
     display: "flex",
     alignItems: "center",
-    gap: "12px",
-    padding: "16px 24px",
-    background: C.dark,
-    color: C.white,
+    gap: "14px",
+    padding: "18px 28px",
+    background: C.ink,
   },
   headerBadge: {
     background: C.red,
     color: C.white,
+    fontFamily: C.mono,
     fontWeight: 700,
     fontSize: "12px",
-    padding: "6px 10px",
-    borderRadius: "8px",
-    letterSpacing: "0.5px",
+    letterSpacing: "0.06em",
+    padding: "7px 11px",
+    borderRadius: "6px",
+    flexShrink: 0,
   },
-  headerTitle: { fontWeight: 600, fontSize: "15px" },
-  headerSubtitle: { fontSize: "12px", color: C.subtleText },
+  headerTitle: {
+    fontFamily: C.serif,
+    fontWeight: 600,
+    fontSize: "19px",
+    lineHeight: 1.2,
+    color: C.white,
+  },
+  headerSubtitle: {
+    marginTop: "3px",
+    fontFamily: C.mono,
+    fontSize: "11.5px",
+    color: C.stoneLight,
+  },
   body: {
-    padding: "24px",
-    maxWidth: "1100px",
+    padding: "28px",
+    maxWidth: "1140px",
     margin: "0 auto",
   },
   filterBar: {
     display: "flex",
     flexWrap: "wrap",
     gap: "10px",
-    marginBottom: "16px",
+    marginBottom: "18px",
     alignItems: "center",
   },
   searchInput: {
-    flex: "1 1 220px",
+    flex: "1 1 240px",
     padding: "9px 12px",
-    borderRadius: "8px",
-    border: `1.5px solid ${C.inputBorder}`,
-    fontSize: "13px",
-    fontFamily: C.font,
+    borderRadius: "6px",
+    border: `1.5px solid ${C.line}`,
+    fontSize: "13.5px",
+    fontFamily: C.sans,
     outline: "none",
     background: C.white,
+    color: C.ink,
   },
   select: {
     padding: "9px 10px",
-    borderRadius: "8px",
-    border: `1.5px solid ${C.inputBorder}`,
+    borderRadius: "6px",
+    border: `1.5px solid ${C.line}`,
     fontSize: "13px",
-    fontFamily: C.font,
+    fontFamily: C.sans,
     background: C.white,
+    color: C.ink,
     cursor: "pointer",
     outline: "none",
   },
   clearButton: {
     padding: "9px 14px",
-    borderRadius: "8px",
+    borderRadius: "6px",
     border: `1.5px solid ${C.red}`,
     background: C.white,
     color: C.red,
-    fontSize: "13px",
-    fontWeight: 600,
+    fontSize: "11.5px",
+    fontWeight: 700,
+    letterSpacing: "0.03em",
+    textTransform: "uppercase",
     cursor: "pointer",
-    fontFamily: C.font,
+    fontFamily: C.mono,
   },
   resultCount: {
-    fontSize: "13px",
-    color: C.mutedText,
+    fontFamily: C.mono,
+    fontSize: "11.5px",
+    color: C.stone,
+    letterSpacing: "0.02em",
     marginBottom: "10px",
   },
   tableWrapper: {
     background: C.white,
-    borderRadius: "12px",
-    boxShadow: "0 2px 12px rgba(0,0,0,0.07)",
+    border: `1px solid ${C.line}`,
+    borderRadius: "10px",
+    boxShadow: "0 1px 2px rgba(0,0,0,0.04), 0 12px 32px rgba(0,0,0,0.08)",
     overflow: "hidden",
   },
   table: {
     width: "100%",
     borderCollapse: "collapse",
   },
-  thead: {
-    background: C.dark,
-    color: C.white,
-  },
   th: {
     padding: "12px 16px",
     textAlign: "left",
-    fontSize: "12px",
+    fontFamily: C.mono,
+    fontSize: "10.5px",
     fontWeight: 600,
-    letterSpacing: "0.4px",
+    letterSpacing: "0.06em",
     textTransform: "uppercase",
+    color: C.white,
+    background: C.ink,
   },
   tr: {
-    borderBottom: `1px solid ${C.borderGrey}`,
+    borderBottom: `1px solid ${C.line}`,
+    borderLeft: "3px solid transparent",
     cursor: "pointer",
-    transition: "background 0.15s",
+    transition: "background 0.15s ease, border-left-color 0.15s ease",
   },
   td: {
     padding: "14px 16px",
     fontSize: "13px",
-    color: C.dark,
+    color: C.ink,
     verticalAlign: "top",
   },
+  tdSub: {
+    fontFamily: C.mono,
+    fontSize: "11px",
+    color: C.stone,
+    marginTop: "2px",
+  },
   emptyCell: {
-    padding: "32px",
+    padding: "40px",
     textAlign: "center",
-    color: C.mutedText,
+    color: C.stone,
     fontSize: "14px",
+    fontStyle: "italic",
   },
 };
