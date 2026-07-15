@@ -88,7 +88,7 @@ curl -X PATCH http://localhost:8000/requests/<request_id>/admin \
     "overrides": {"security_flag": true},
     "override_reason": "Vendor has had a recent breach",
     "overridden_by": "jsmith@sdsu.edu",
-    "status": "UnderStaffReview"
+    "status": "AdditionalReview"
   }'
 ```
 

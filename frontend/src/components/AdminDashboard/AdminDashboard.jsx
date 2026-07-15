@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { listRequests } from "../../api.js";
 import RequestDetail from "./RequestDetail.jsx";
+import { STATUS_ORDER, STATUS_LABELS, statusColor, statusLabel } from "./statusConfig.js";
+import { effectiveFlags } from "./flagsUtil.js";
 
 // ── Design tokens (matches RequesterChat.jsx / IntakeForm.jsx palette + type system) ──
 const C = {
@@ -26,22 +28,11 @@ function riskColor(level) {
   return C.stone;
 }
 
-function statusColor(status) {
-  const map = {
-    Submitted: "#1565C0",
-    ChatbotInProgress: "#6A1B9A",
-    FlagsComputed: "#B5650B",
-    UnderStaffReview: C.red,
-    Approved: "#2E7D32",
-    Denied: C.stone,
-  };
-  return map[status] || C.stone;
-}
-
-function FlagPill({ value, label }) {
+function FlagPill({ value, label, overridden }) {
   const active = value === true;
   return (
     <span
+      title={overridden ? "Staff override in effect" : undefined}
       style={{
         display: "inline-block",
         padding: "2px 8px",
@@ -53,10 +44,12 @@ function FlagPill({ value, label }) {
         background: active ? C.red : "transparent",
         color: active ? C.white : C.stoneLight,
         border: active ? "none" : `1px solid ${C.line}`,
+        boxShadow: overridden ? `0 0 0 1.5px ${C.ink}` : "none",
         marginRight: "4px",
       }}
     >
       {label}
+      {overridden && "*"}
     </span>
   );
 }
@@ -81,15 +74,6 @@ function Badge({ label, color }) {
     </span>
   );
 }
-
-const ALL_STATUSES = [
-  "Submitted",
-  "ChatbotInProgress",
-  "FlagsComputed",
-  "UnderStaffReview",
-  "Approved",
-  "Denied",
-];
 
 function emptyFlags(flags) {
   return flags && typeof flags === "object" ? flags : {};
@@ -141,12 +125,13 @@ export default function AdminDashboard() {
   const filtered = requests.filter((r) => {
     const requestor = emptyRequestor(r.requestor);
     const flags = emptyFlags(r.flags);
+    const effective = effectiveFlags(flags, r.admin);
 
     if (filterStatus && r.status !== filterStatus) return false;
     if (filterFlag) {
-      if (filterFlag === "ati" && !flags.ati_flag) return false;
-      if (filterFlag === "security" && !flags.security_flag) return false;
-      if (filterFlag === "integration" && !flags.integration_flag) return false;
+      if (filterFlag === "ati" && !effective.ati.value) return false;
+      if (filterFlag === "security" && !effective.security.value) return false;
+      if (filterFlag === "integration" && !effective.integration.value) return false;
     }
     if (filterDept && requestor.department !== filterDept) return false;
     if (search) {
@@ -154,7 +139,8 @@ export default function AdminDashboard() {
       if (
         !(requestor.software_name || "").toLowerCase().includes(q) &&
         !(requestor.requested_for_name || "").toLowerCase().includes(q) &&
-        !(requestor.department || "").toLowerCase().includes(q)
+        !(requestor.department || "").toLowerCase().includes(q) &&
+        !(r.request_id || "").toLowerCase().includes(q)
       )
         return false;
     }
@@ -194,7 +180,7 @@ export default function AdminDashboard() {
         <div style={styles.filterBar}>
           <input
             style={styles.searchInput}
-            placeholder="Search software, requestor, department…"
+            placeholder="Search software, requestor, department, procurement ID…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             aria-label="Search requests"
@@ -207,9 +193,9 @@ export default function AdminDashboard() {
             aria-label="Filter by status"
           >
             <option value="">All statuses</option>
-            {ALL_STATUSES.map((s) => (
+            {STATUS_ORDER.map((s) => (
               <option key={s} value={s}>
-                {s}
+                {STATUS_LABELS[s]}
               </option>
             ))}
           </select>
@@ -303,6 +289,7 @@ export default function AdminDashboard() {
                 filtered.map((r) => {
                   const requestor = emptyRequestor(r.requestor);
                   const flags = emptyFlags(r.flags);
+                  const effective = effectiveFlags(flags, r.admin);
                   const active = selectedId === r.request_id || hoveredId === r.request_id;
                   return (
                     <tr
@@ -319,6 +306,7 @@ export default function AdminDashboard() {
                     >
                       <td style={{ ...styles.td, fontWeight: 600 }}>
                         {requestor.software_name || "—"}
+                        <div style={styles.tdSub}>{r.request_id}</div>
                       </td>
                       <td style={styles.td}>
                         <div>{requestor.requested_for_name || "—"}</div>
@@ -328,12 +316,12 @@ export default function AdminDashboard() {
                       </td>
                       <td style={styles.td}>{requestor.department || "—"}</td>
                       <td style={styles.td}>
-                        <Badge label={r.status || "Unknown"} color={statusColor(r.status)} />
+                        <Badge label={statusLabel(r.status)} color={statusColor(r.status)} />
                       </td>
                       <td style={styles.td}>
-                        <FlagPill value={flags.ati_flag} label="ATI" />
-                        <FlagPill value={flags.security_flag} label="SEC" />
-                        <FlagPill value={flags.integration_flag} label="INT" />
+                        <FlagPill value={effective.ati.value} overridden={effective.ati.overridden} label="ATI" />
+                        <FlagPill value={effective.security.value} overridden={effective.security.overridden} label="SEC" />
+                        <FlagPill value={effective.integration.value} overridden={effective.integration.overridden} label="INT" />
                       </td>
                       <td style={styles.td}>
                         {flags.risk_level ? (

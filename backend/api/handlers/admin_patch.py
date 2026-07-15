@@ -6,7 +6,7 @@ Body shape:
   "override_reason": "string",
   "overridden_by": "string",
   "admin_notes": "string",
-  "status": "UnderStaffReview | Approved | Denied"   # optional
+  "status": "Submitted | ITReview | AdditionalReview | Approved | Denied"   # optional
 }
 """
 

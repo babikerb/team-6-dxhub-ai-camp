@@ -31,9 +31,8 @@ def _get_table():
 
 VALID_STATUSES = {
     "Submitted",
-    "ChatbotInProgress",
-    "FlagsComputed",
-    "UnderStaffReview",
+    "ITReview",
+    "AdditionalReview",
     "Approved",
     "Denied",
 }
