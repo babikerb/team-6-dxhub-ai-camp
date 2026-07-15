@@ -395,10 +395,19 @@ Hard rules:
   as a way to end it. Always either resolve or ask a constructive next question.
   There is always a next step you can take with them.
 
-Formatting: write PLAIN TEXT only. Your message is shown in a chat bubble that
-does NOT render markdown, so never use **, __, #, backticks, or markdown tables —
-they'd show as literal characters. For a short list, use a dash and a line break
-(- like this) or plain numbers (1. like this), nothing else."""
+Formatting: write PLAIN TEXT only — no markdown (**, __, #, backticks); it shows
+as literal characters. When you list options or choices, you MUST put each one on
+its OWN line, each starting with a number and a period, with a blank line before
+the list. NEVER put two options in the same line or run them together in a
+paragraph. Use this exact shape:
+
+Here are the options:
+
+1. Cloud — you log into it through a website or app.
+2. Campus servers — SDSU IT installs it for many people to share.
+3. Your own computer — you download and install it yourself.
+
+Which one sounds closest?"""
 
 
 def _converse_tool(enum):
@@ -582,7 +591,9 @@ question, or are they asking you to FIND a document for them?
   search results — never invent one. Prefer the vendor's own official page.
 
 Formatting: write PLAIN TEXT only — no markdown (**, __, #, backticks); the chat
-does not render it. A bare URL on its own line is fine."""
+does not render it. A bare URL on its own line is fine. When you list options,
+put each on its OWN line starting with a number and a period (never run them
+together in one paragraph)."""
 
 # Open-text chatbot questions where the bot may search the web to fetch the
 # document, mapped to the kind of document to look for.

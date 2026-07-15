@@ -340,6 +340,42 @@ export function evaluate(a) {
   };
 }
 
+// Renders a bot message as readable text: numbered/bulleted lines become an
+// indented list with a red marker; blank lines become spacing.
+function BotText({ text }) {
+  const lines = String(text || "").split("\n");
+  return (
+    <div style={styles.botText}>
+      {lines.map((line, i) => {
+        const num = line.match(/^\s*(\d+)[.)]\s+(.*)$/);
+        const bullet = line.match(/^\s*[-•*]\s+(.*)$/);
+        if (num) {
+          return (
+            <div key={i} style={styles.botListItem}>
+              <span style={styles.botListMarker}>{num[1]}.</span>
+              <span>{num[2]}</span>
+            </div>
+          );
+        }
+        if (bullet) {
+          return (
+            <div key={i} style={styles.botListItem}>
+              <span style={styles.botListMarker}>•</span>
+              <span>{bullet[1]}</span>
+            </div>
+          );
+        }
+        if (line.trim() === "") return <div key={i} style={{ height: "7px" }} />;
+        return (
+          <div key={i} style={{ marginBottom: "2px" }}>
+            {line}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function RequesterChat({ requestId }) {
   const [answers, setAnswers] = useState({});
   const [log, setLog] = useState([{ from: "bot", label: STEPS[0].label, text: STEPS[0].bot }]);
@@ -582,7 +618,7 @@ function RequesterChat({ requestId }) {
                 <div style={styles.botRule} />
                 <div>
                   <div style={styles.botLabel}>{entry.label}</div>
-                  <div style={styles.botText}>{entry.text}</div>
+                  <BotText text={entry.text} />
                 </div>
               </div>
             ) : (
@@ -823,7 +859,20 @@ const styles = {
     fontSize: "15px",
     lineHeight: 1.5,
     color: "var(--ink)",
-    whiteSpace: "pre-wrap",
+  },
+  botListItem: {
+    display: "flex",
+    gap: "10px",
+    paddingLeft: "16px",
+    margin: "5px 0",
+    alignItems: "baseline",
+    lineHeight: 1.5,
+  },
+  botListMarker: {
+    color: "var(--red)",
+    fontWeight: 700,
+    minWidth: "18px",
+    flexShrink: 0,
   },
   orChoose: {
     padding: "14px 28px 6px",
