@@ -149,10 +149,12 @@ Key design decision: the chatbot Lambda computes the flags itself. It imports th
 
 DynamoDB table `SoftwareRequests`, partition key `request_id` (UUID v4). The record is split into independent nested objects — `requestor`, `it_review`, `flags`, `admin` — so each part of the pipeline writes only to its own subtree, avoiding merge conflicts and race conditions.
 
+`status` mirrors SDSU's actual review stages (see `data/Software Request Infographic.pdf`, `data/Software Request Workflow-v2.pdf`): a request moves through IT triage, then `AdditionalReview` if needed, ending in `Approved` or `Denied`. ATI, Security, and Integration review run independently and in parallel during `AdditionalReview` (not one after another), so which of them actually apply to a request is tracked by its `flags`, not by a separate status per review. Procurement (P2P) happens after this app's scope, in ServiceNow.
+
 ```jsonc
 {
   "request_id": "uuid",
-  "status": "Submitted | ChatbotInProgress | FlagsComputed | UnderStaffReview | Approved | Denied",
+  "status": "Submitted | ITReview | AdditionalReview | Approved | Denied",
   "created_at": "ISO8601",
   "updated_at": "ISO8601",
 

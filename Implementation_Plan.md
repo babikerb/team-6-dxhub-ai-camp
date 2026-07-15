@@ -28,7 +28,7 @@ Partition key: request_id (string, UUID v4)
 
 {
   "request_id": "uuid",
-  "status": "Submitted | ChatbotInProgress | FlagsComputed | UnderStaffReview | Approved | Denied",
+  "status": "Submitted | ITReview | AdditionalReview | Approved | Denied",
   "created_at": "ISO8601",
   "updated_at": "ISO8601",
 

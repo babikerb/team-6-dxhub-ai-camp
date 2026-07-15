@@ -1,15 +1,35 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getRequestByProcurementId } from "./api.js";
+import {
+  STATUS_ORDER,
+  STATUS_STEPPER_LABELS,
+  STATUS_REQUESTER_LABELS,
+} from "../AdminDashboard/statusConfig.js";
+import { effectiveFlags } from "../AdminDashboard/flagsUtil.js";
 
-const STATUS_LABELS = {
-  Submitted: "Submitted",
-  ChatbotInProgress: "IT review in progress",
-  FlagsComputed: "Flags computed",
-  UnderStaffReview: "Under staff review",
-  Approved: "Approved",
-  Denied: "Denied",
-};
+const REVIEW_TYPE_LABELS = { ati: "ATI", security: "Security", integration: "Integration" };
+
+// Which of the parallel reviews (ATI/Security/Integration) actually apply —
+// these run independently, not one after another, so a request can need any
+// combination of them at once during the single "Additional Review" stage.
+function applicableReviews(record) {
+  const effective = effectiveFlags(record.flags || {}, record.admin);
+  return Object.entries(REVIEW_TYPE_LABELS)
+    .filter(([key]) => effective[key].value)
+    .map(([, label]) => label);
+}
+
+// A request with no flags at all skips Additional Review entirely and goes
+// straight to a decision, matching the real workflow's "skip to approvals" branch.
+function stepsForRecord(record) {
+  const needsAdditionalReview = applicableReviews(record).length > 0 || record.status === "AdditionalReview";
+  return STATUS_ORDER.filter((s) => {
+    if (s === "Denied") return false;
+    if (s === "AdditionalReview") return needsAdditionalReview;
+    return true;
+  });
+}
 
 function formatDate(iso) {
   if (!iso) return "—";
@@ -23,6 +43,70 @@ function DetailRow({ label, value }) {
     <div style={styles.detailRow}>
       <div style={styles.detailLabel}>{label}</div>
       <div style={styles.detailValue}>{value || "—"}</div>
+    </div>
+  );
+}
+
+function StatusStepper({ record }) {
+  if (record.status === "Denied") {
+    return <div style={styles.deniedBanner}>This request was denied.</div>;
+  }
+
+  const steps = stepsForRecord(record);
+  const currentIndex = steps.indexOf(record.status);
+  const position = currentIndex === -1 ? 0 : currentIndex;
+  const next = position < steps.length - 1 ? steps[position + 1] : null;
+  const reviews = applicableReviews(record);
+
+  return (
+    <div style={styles.stepper}>
+      <div style={styles.dotsWrap}>
+        {steps.map((s, i) => (
+          <div key={s} style={styles.dotUnit}>
+            <div
+              style={{
+                ...styles.dot,
+                background: i < position ? "var(--red)" : i === position ? "#fff" : "var(--paper-alt)",
+                borderColor: i <= position ? "var(--red)" : "var(--line)",
+              }}
+            />
+            {i < steps.length - 1 && (
+              <div
+                style={{
+                  ...styles.dotLine,
+                  background: i < position ? "var(--red)" : "var(--line)",
+                }}
+              />
+            )}
+          </div>
+        ))}
+      </div>
+      <div style={styles.stepLabelsWrap}>
+        {steps.map((s, i) => (
+          <div
+            key={s}
+            style={{
+              ...styles.stepLabel,
+              color: i === position ? "var(--ink)" : "var(--stone)",
+              fontWeight: i === position ? 700 : 500,
+            }}
+          >
+            {STATUS_STEPPER_LABELS[s] || s}
+          </div>
+        ))}
+      </div>
+      <div style={styles.stepCaption}>
+        You're here: <strong>{STATUS_STEPPER_LABELS[record.status] || record.status}</strong>
+        {record.status === "AdditionalReview" && reviews.length > 0 && (
+          <> ({reviews.join(", ")})</>
+        )}
+        {next && (
+          <>
+            {" "}
+            — next up: {STATUS_STEPPER_LABELS[next] || next}
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -93,7 +177,10 @@ function ProcurementSearch() {
             <div style={styles.result}>
               <div style={styles.resultEyebrow}>Procurement found</div>
               <div style={styles.resultHeading}>{record.requestor?.software_name || "Untitled request"}</div>
-              <div style={styles.statusBadge}>{STATUS_LABELS[record.status] || record.status}</div>
+              <div style={styles.statusBadge}>
+                {STATUS_REQUESTER_LABELS[record.status] || record.status}
+              </div>
+              <StatusStepper record={record} />
 
               <div style={styles.detailList}>
                 <DetailRow label="Procurement ID" value={record.request_id} />
@@ -245,6 +332,58 @@ const styles = {
     color: "var(--ink)",
     textTransform: "uppercase",
     letterSpacing: "0.04em",
+  },
+  stepper: {
+    width: "100%",
+    margin: "4px 0 2px",
+  },
+  dotsWrap: {
+    display: "flex",
+    alignItems: "center",
+  },
+  dotUnit: { display: "flex", alignItems: "center", flex: 1 },
+  dot: {
+    width: "9px",
+    height: "9px",
+    borderRadius: "50%",
+    border: "1.5px solid var(--line)",
+    flexShrink: 0,
+  },
+  dotLine: {
+    flex: 1,
+    height: "1.5px",
+    marginLeft: "2px",
+    marginRight: "2px",
+    background: "var(--line)",
+  },
+  stepLabelsWrap: {
+    display: "flex",
+    marginTop: "6px",
+  },
+  stepLabel: {
+    flex: 1,
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "9.5px",
+    lineHeight: 1.3,
+    letterSpacing: "0.01em",
+    paddingRight: "4px",
+  },
+  stepCaption: {
+    marginTop: "10px",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "11.5px",
+    color: "var(--stone)",
+  },
+  deniedBanner: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "12px",
+    fontWeight: 700,
+    color: "var(--red-dark)",
+    background: "#FDECEC",
+    border: "1px solid var(--red)",
+    borderRadius: "6px",
+    padding: "10px 12px",
+    margin: "4px 0 2px",
   },
   detailList: {
     display: "flex",

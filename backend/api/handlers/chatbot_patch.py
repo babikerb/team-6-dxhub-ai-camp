@@ -34,7 +34,7 @@ def handler(event, context=None):
 
     record["it_review"] = it_review
     record["flags"] = flags
-    record["status"] = "FlagsComputed"
+    record["status"] = "ITReview"
     record["updated_at"] = store.now_iso()
 
     store.save_request(record)

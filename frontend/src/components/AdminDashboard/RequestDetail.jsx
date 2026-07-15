@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { patchAdmin } from "../../api.js";
+import { STATUS_ORDER, STATUS_LABELS, STATUS_DESCRIPTIONS, statusColor } from "./statusConfig.js";
 
 // ── Design tokens (matches RequesterChat.jsx / IntakeForm.jsx palette + type system) ──
 const C = {
@@ -141,6 +142,7 @@ export default function RequestDetail({ request, onClose, onSaved }) {
   const [overrideReason, setOverrideReason] = useState(admin.override_reason || "");
   const [overriddenBy, setOverriddenBy] = useState(admin.overridden_by || "");
   const [adminNotes, setAdminNotes] = useState(admin.admin_notes || "");
+  const [status, setStatus] = useState(request.status || "Submitted");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -189,6 +191,7 @@ export default function RequestDetail({ request, onClose, onSaved }) {
       override_reason: overrideReason.trim(),
       overridden_by: overriddenBy.trim(),
       admin_notes: adminNotes.trim(),
+      status,
     };
 
     try {
@@ -215,6 +218,9 @@ export default function RequestDetail({ request, onClose, onSaved }) {
             <div style={styles.panelSubtitle}>
               {requestor.requested_for_name} · {requestor.department}
             </div>
+            <div style={styles.panelProcurementId}>
+              Procurement ID: <span style={styles.panelProcurementIdValue}>{request.request_id}</span>
+            </div>
           </div>
           <button style={styles.closeButton} onClick={onClose} aria-label="Close panel">
             ✕
@@ -223,6 +229,38 @@ export default function RequestDetail({ request, onClose, onSaved }) {
 
         {/* Scrollable content */}
         <div style={styles.panelBody}>
+
+          {/* ── Status ── */}
+          <Section title="Status">
+            <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "10px" }}>
+              <span
+                style={{
+                  ...styles.statusBadge,
+                  background: statusColor(status),
+                }}
+              >
+                {STATUS_LABELS[status] || status}
+              </span>
+            </div>
+            <select
+              style={styles.select}
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+              aria-label="Update status"
+            >
+              {STATUS_ORDER.map((s) => (
+                <option key={s} value={s}>
+                  {STATUS_LABELS[s]}
+                </option>
+              ))}
+            </select>
+            <div style={styles.statusDescription}>
+              {STATUS_DESCRIPTIONS[status]}
+            </div>
+            <div style={styles.overrideNote}>
+              Changing the status here takes effect when you click Save changes below.
+            </div>
+          </Section>
 
           {/* ── Requestor ── */}
           <Section title="Requestor Information">
@@ -403,6 +441,16 @@ const styles = {
     color: C.stoneLight,
     marginTop: "4px",
   },
+  panelProcurementId: {
+    fontFamily: C.mono,
+    fontSize: "10.5px",
+    color: C.stoneLight,
+    marginTop: "6px",
+  },
+  panelProcurementIdValue: {
+    color: C.white,
+    userSelect: "all",
+  },
   closeButton: {
     background: "transparent",
     border: "none",
@@ -538,6 +586,35 @@ const styles = {
     color: C.ink,
     marginBottom: "6px",
     marginTop: "14px",
+  },
+  statusBadge: {
+    display: "inline-block",
+    padding: "4px 11px",
+    borderRadius: "4px",
+    fontFamily: C.mono,
+    fontSize: "11.5px",
+    fontWeight: 700,
+    letterSpacing: "0.04em",
+    textTransform: "uppercase",
+    color: C.white,
+  },
+  statusDescription: {
+    marginTop: "8px",
+    fontSize: "12.5px",
+    color: C.stone,
+    lineHeight: 1.5,
+  },
+  select: {
+    width: "100%",
+    padding: "9px 10px",
+    borderRadius: "6px",
+    border: `1.5px solid ${C.line}`,
+    fontSize: "13px",
+    fontFamily: C.sans,
+    background: C.white,
+    color: C.ink,
+    cursor: "pointer",
+    outline: "none",
   },
   textarea: {
     width: "100%",

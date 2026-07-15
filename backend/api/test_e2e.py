@@ -103,7 +103,7 @@ def test_full_pipeline(dynamo_table):
     )
     assert chat["statusCode"] == 200
     chat_body = json.loads(chat["body"])
-    assert chat_body["status"] == "FlagsComputed"
+    assert chat_body["status"] == "ITReview"
     # Classroom scope + 30-100 users -> ATI flagged, using requestor scope
     assert chat_body["flags"]["ati_flag"] is True
     assert chat_body["flags"]["security_flag"] is True
@@ -121,13 +121,13 @@ def test_full_pipeline(dynamo_table):
                     "override_reason": "Not needed for this class size",
                     "overridden_by": "jsmith@sdsu.edu",
                     "admin_notes": "Reviewed in camp demo",
-                    "status": "UnderStaffReview",
+                    "status": "AdditionalReview",
                 }
             ),
         }
     )
     assert admin["statusCode"] == 200
     admin_body = json.loads(admin["body"])
-    assert admin_body["status"] == "UnderStaffReview"
+    assert admin_body["status"] == "AdditionalReview"
     assert admin_body["admin"]["overrides"]["ati_flag"] is False
     assert admin_body["admin"]["overridden_by"] == "jsmith@sdsu.edu"
