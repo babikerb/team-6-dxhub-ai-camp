@@ -1,19 +1,20 @@
 import { useState } from "react";
 import { patchAdmin } from "../../api.js";
 
-// ── Color tokens (matches RequesterChat.jsx palette) ──────────────────────────
+// ── Design tokens (matches RequesterChat.jsx / IntakeForm.jsx palette + type system) ──
 const C = {
-  red: "#C8102E",
-  dark: "#1A1A1A",
-  darkGrey: "#3A3A3A",
+  ink: "var(--ink)",
+  red: "var(--red)",
+  redDark: "var(--red-dark)",
+  paper: "var(--paper)",
+  paperAlt: "var(--paper-alt)",
+  line: "var(--line)",
+  stone: "var(--stone)",
+  stoneLight: "var(--stone-light)",
   white: "#ffffff",
-  pageBg: "#F2F2F2",
-  lightGrey: "#FAFAFA",
-  borderGrey: "#EDEDED",
-  inputBorder: "#DDD",
-  mutedText: "#666",
-  subtleText: "#B3B3B3",
-  font: "'Segoe UI', Arial, sans-serif",
+  sans: "'IBM Plex Sans', sans-serif",
+  mono: "'IBM Plex Mono', monospace",
+  serif: "'Source Serif 4', serif",
 };
 
 const DEFAULT_OVERRIDES = {
@@ -24,8 +25,8 @@ const DEFAULT_OVERRIDES = {
 
 function riskColor(level) {
   if (level === "High") return C.red;
-  if (level === "Medium") return "#E87C00";
-  return C.darkGrey;
+  if (level === "Medium") return "#B5650B";
+  return C.stone;
 }
 
 // ── Section wrapper ───────────────────────────────────────────────────────────
@@ -42,10 +43,10 @@ function Section({ title, children }) {
 function Field({ label, value }) {
   const display =
     value === null || value === undefined || value === ""
-      ? <span style={{ color: C.subtleText, fontStyle: "italic" }}>—</span>
+      ? <span style={{ color: C.stoneLight, fontStyle: "italic" }}>—</span>
       : Array.isArray(value)
       ? value.length === 0
-        ? <span style={{ color: C.subtleText, fontStyle: "italic" }}>—</span>
+        ? <span style={{ color: C.stoneLight, fontStyle: "italic" }}>—</span>
         : value.join(", ")
       : typeof value === "boolean"
       ? value ? "Yes" : "No"
@@ -74,7 +75,7 @@ function FlagRow({ label, computedValue, computedReason, overrideValue, onToggle
         {/* Computed value */}
         <div style={styles.flagCell}>
           <div style={styles.flagCellLabel}>Computed</div>
-          <span style={{ ...styles.flagPill, background: computedValue ? C.red : C.darkGrey }}>
+          <span style={{ ...styles.flagPill, background: computedValue ? C.red : C.stone }}>
             {computedValue ? "Flagged" : "Clear"}
           </span>
         </div>
@@ -85,9 +86,9 @@ function FlagRow({ label, computedValue, computedReason, overrideValue, onToggle
           <span
             style={{
               ...styles.flagPill,
-              background: isOverridden ? (overrideValue ? C.red : C.darkGrey) : "transparent",
-              color: isOverridden ? C.white : C.mutedText,
-              border: isOverridden ? "none" : `1.5px dashed ${C.inputBorder}`,
+              background: isOverridden ? (overrideValue ? C.red : C.stone) : "transparent",
+              color: isOverridden ? C.white : C.stone,
+              border: isOverridden ? "none" : `1.5px dashed ${C.line}`,
             }}
           >
             {isOverridden ? (overrideValue ? "Flagged" : "Clear") : "None"}
@@ -97,7 +98,7 @@ function FlagRow({ label, computedValue, computedReason, overrideValue, onToggle
         {/* Effective (what will be used) */}
         <div style={styles.flagCell}>
           <div style={styles.flagCellLabel}>Effective</div>
-          <span style={{ ...styles.flagPill, background: effective ? C.red : C.darkGrey }}>
+          <span style={{ ...styles.flagPill, background: effective ? C.red : C.stone }}>
             {effective ? "Flagged" : "Clear"}
           </span>
         </div>
@@ -107,9 +108,9 @@ function FlagRow({ label, computedValue, computedReason, overrideValue, onToggle
           data-testid={`toggle-${label.replace(/\s+/g, '-').toLowerCase()}`}
           style={{
             ...styles.toggleButton,
-            background: overrideValue === true ? C.red : overrideValue === false ? C.darkGrey : C.white,
-            color: overrideValue !== null ? C.white : C.dark,
-            border: overrideValue !== null ? "none" : `1.5px solid ${C.inputBorder}`,
+            background: overrideValue === true ? C.red : overrideValue === false ? C.stone : C.white,
+            color: overrideValue !== null ? C.white : C.ink,
+            border: overrideValue !== null ? "none" : `1.5px solid ${C.line}`,
           }}
           onClick={() => onToggle(label)}
           type="button"
@@ -117,8 +118,8 @@ function FlagRow({ label, computedValue, computedReason, overrideValue, onToggle
           {overrideValue === null
             ? "Override"
             : overrideValue
-            ? "Set \u2192 Clear"
-            : "Set \u2192 Flag"}
+            ? "Set → Clear"
+            : "Set → Flag"}
         </button>
       </div>
     </div>
@@ -265,8 +266,8 @@ export default function RequestDetail({ request, onClose, onSaved }) {
 
           {/* ── Computed Flags ── */}
           <Section title="Computed Flags">
-            <div style={{ marginBottom: "8px" }}>
-              <span style={{ fontSize: "12px", color: C.mutedText }}>
+            <div style={{ marginBottom: "10px" }}>
+              <span style={styles.riskLine}>
                 Risk level:{" "}
                 <span style={{ fontWeight: 700, color: riskColor(flags.risk_level) }}>
                   {flags.risk_level || "Pending"}
@@ -364,7 +365,7 @@ const styles = {
   backdrop: {
     position: "fixed",
     inset: 0,
-    background: "rgba(0,0,0,0.35)",
+    background: "rgba(26, 26, 26, 0.45)",
     zIndex: 100,
   },
   panel: {
@@ -377,20 +378,31 @@ const styles = {
     zIndex: 101,
     display: "flex",
     flexDirection: "column",
-    boxShadow: "-4px 0 24px rgba(0,0,0,0.15)",
-    fontFamily: C.font,
+    boxShadow: "-4px 0 32px rgba(0,0,0,0.18)",
+    fontFamily: C.sans,
+    color: C.ink,
   },
   panelHeader: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    padding: "16px 20px",
-    background: C.dark,
+    padding: "18px 24px",
+    background: C.ink,
     color: C.white,
     flexShrink: 0,
   },
-  panelTitle: { fontWeight: 700, fontSize: "15px" },
-  panelSubtitle: { fontSize: "12px", color: C.subtleText, marginTop: "2px" },
+  panelTitle: {
+    fontFamily: C.serif,
+    fontWeight: 600,
+    fontSize: "18px",
+    lineHeight: 1.2,
+  },
+  panelSubtitle: {
+    fontFamily: C.mono,
+    fontSize: "11.5px",
+    color: C.stoneLight,
+    marginTop: "4px",
+  },
   closeButton: {
     background: "transparent",
     border: "none",
@@ -406,42 +418,52 @@ const styles = {
     padding: "0 0 32px",
   },
   section: {
-    padding: "16px 20px",
-    borderBottom: `1px solid ${C.borderGrey}`,
+    padding: "18px 24px",
+    borderBottom: `1px solid ${C.line}`,
   },
   sectionTitle: {
+    fontFamily: C.mono,
     fontWeight: 700,
-    fontSize: "12px",
+    fontSize: "11px",
     textTransform: "uppercase",
-    letterSpacing: "0.5px",
-    color: C.dark,
-    marginBottom: "12px",
+    letterSpacing: "0.06em",
+    color: C.red,
+    marginBottom: "14px",
+    paddingBottom: "8px",
+    borderBottom: `1px solid ${C.line}`,
   },
   field: {
     display: "flex",
     justifyContent: "space-between",
     gap: "12px",
-    padding: "5px 0",
-    borderBottom: `1px solid ${C.borderGrey}`,
+    padding: "6px 0",
+    borderBottom: `1px solid ${C.paperAlt}`,
     fontSize: "13px",
   },
   fieldLabel: {
-    color: C.mutedText,
+    fontFamily: C.mono,
+    fontSize: "11.5px",
+    color: C.stone,
     flexShrink: 0,
     width: "170px",
   },
   fieldValue: {
-    color: C.dark,
+    color: C.ink,
     textAlign: "right",
     wordBreak: "break-word",
+  },
+  riskLine: {
+    fontFamily: C.mono,
+    fontSize: "12px",
+    color: C.stone,
   },
   flagRow: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "flex-start",
     gap: "12px",
-    padding: "10px 0",
-    borderBottom: `1px solid ${C.borderGrey}`,
+    padding: "12px 0",
+    borderBottom: `1px solid ${C.paperAlt}`,
     flexWrap: "wrap",
   },
   flagRowLeft: {
@@ -450,12 +472,13 @@ const styles = {
   flagLabel: {
     fontWeight: 600,
     fontSize: "13px",
-    color: C.dark,
+    color: C.ink,
   },
   flagReason: {
+    fontFamily: C.mono,
     fontSize: "11px",
-    color: C.mutedText,
-    marginTop: "2px",
+    color: C.stone,
+    marginTop: "3px",
   },
   flagRowRight: {
     display: "flex",
@@ -470,71 +493,80 @@ const styles = {
     gap: "3px",
   },
   flagCellLabel: {
-    fontSize: "10px",
-    color: C.subtleText,
+    fontFamily: C.mono,
+    fontSize: "9.5px",
+    color: C.stoneLight,
     textTransform: "uppercase",
-    letterSpacing: "0.3px",
+    letterSpacing: "0.04em",
   },
   flagPill: {
     display: "inline-block",
     padding: "2px 8px",
-    borderRadius: "999px",
-    fontSize: "11px",
+    borderRadius: "3px",
+    fontFamily: C.mono,
+    fontSize: "10.5px",
     fontWeight: 700,
+    letterSpacing: "0.02em",
     color: C.white,
   },
   toggleButton: {
-    padding: "5px 10px",
-    borderRadius: "8px",
+    padding: "6px 12px",
+    borderRadius: "5px",
     fontSize: "11px",
     fontWeight: 600,
+    letterSpacing: "0.02em",
     cursor: "pointer",
-    fontFamily: C.font,
+    fontFamily: C.mono,
     whiteSpace: "nowrap",
   },
   overrideNote: {
-    fontSize: "12px",
-    color: C.mutedText,
-    background: C.lightGrey,
-    padding: "10px",
-    borderRadius: "8px",
-    marginBottom: "14px",
+    fontSize: "12.5px",
+    color: C.stone,
+    background: C.paper,
+    border: `1px solid ${C.line}`,
+    padding: "12px 14px",
+    borderRadius: "6px",
+    marginBottom: "16px",
     lineHeight: 1.5,
   },
   formLabel: {
     display: "block",
-    fontSize: "12px",
+    fontFamily: C.mono,
+    fontSize: "11px",
     fontWeight: 600,
-    color: C.dark,
+    letterSpacing: "0.02em",
+    color: C.ink,
     marginBottom: "6px",
-    marginTop: "12px",
+    marginTop: "14px",
   },
   textarea: {
     width: "100%",
-    padding: "9px 12px",
-    borderRadius: "8px",
-    border: `1.5px solid ${C.inputBorder}`,
-    fontSize: "13px",
-    fontFamily: C.font,
+    padding: "10px 12px",
+    borderRadius: "6px",
+    border: `1.5px solid ${C.line}`,
+    fontSize: "13.5px",
+    fontFamily: C.sans,
+    color: C.ink,
     resize: "vertical",
     boxSizing: "border-box",
     outline: "none",
   },
   input: {
     width: "100%",
-    padding: "9px 12px",
-    borderRadius: "8px",
-    border: `1.5px solid ${C.inputBorder}`,
-    fontSize: "13px",
-    fontFamily: C.font,
+    padding: "10px 12px",
+    borderRadius: "6px",
+    border: `1.5px solid ${C.line}`,
+    fontSize: "13.5px",
+    fontFamily: C.sans,
+    color: C.ink,
     boxSizing: "border-box",
     outline: "none",
   },
   errorMsg: {
     marginTop: "10px",
     padding: "10px 12px",
-    borderRadius: "8px",
-    background: "#FFECEC",
+    borderRadius: "6px",
+    background: "#FDECEC",
     color: C.red,
     fontSize: "13px",
     fontWeight: 600,
@@ -544,28 +576,30 @@ const styles = {
     display: "flex",
     justifyContent: "flex-end",
     gap: "10px",
-    marginTop: "16px",
+    marginTop: "18px",
   },
   cancelButton: {
     padding: "10px 18px",
-    borderRadius: "8px",
-    border: `1.5px solid ${C.inputBorder}`,
+    borderRadius: "6px",
+    border: `1.5px solid ${C.line}`,
     background: C.white,
-    color: C.dark,
-    fontSize: "13px",
+    color: C.ink,
+    fontSize: "12.5px",
     fontWeight: 600,
+    letterSpacing: "0.02em",
     cursor: "pointer",
-    fontFamily: C.font,
+    fontFamily: C.mono,
   },
   saveButton: {
     padding: "10px 18px",
-    borderRadius: "8px",
+    borderRadius: "6px",
     border: "none",
-    background: C.dark,
+    background: C.ink,
     color: C.white,
-    fontSize: "13px",
+    fontSize: "12.5px",
     fontWeight: 600,
+    letterSpacing: "0.02em",
     cursor: "pointer",
-    fontFamily: C.font,
+    fontFamily: C.mono,
   },
 };
