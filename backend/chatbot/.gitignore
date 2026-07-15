@@ -1,0 +1,4 @@
+# Internal SDSU historical data — never commit to the public repo.
+# Regenerate locally from the private ServiceNow export (see README).
+*.json
+!package.json
