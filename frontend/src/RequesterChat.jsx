@@ -484,6 +484,8 @@ function RequesterChat({ requestId }) {
             ...l,
             { from: "bot", label: "AI", text: r.message || "Could you tell me a bit more?" },
           ]);
+          // If the bot found the document via search, pre-fill it so they just hit Enter.
+          if (r.suggested_value) setTextInput(r.suggested_value);
         }
       } catch (e) {
         commitAnswer(trimmed); // fail open: never wedge the form

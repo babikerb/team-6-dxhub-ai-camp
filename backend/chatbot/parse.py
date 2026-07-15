@@ -540,59 +540,97 @@ def _converse_mock(question_id, question_text, history):
 # as the answer. Decides: is this a real answer, or are they asking for help?
 _ASSIST_SYSTEM = """You help a non-technical San Diego State University faculty/staff member fill
 out one open-text field on a software request form. Given the question and their
-reply, decide ONE thing: did they actually ANSWER it, or are they confused /
-asking YOU a question / asking where to find something?
+reply, decide: did they actually ANSWER it, are they confused / asking YOU a
+question, or are they asking you to FIND a document for them?
 
 - A real answer includes a substantive response, a pasted link/URL, or a valid
   opt-out like "no", "none", "not sure", "n/a".
-- If instead they ask a question back ("where do I find that?", "what do you
-  mean?", "how?") or express confusion, that is NOT an answer. Write a short,
-  warm, plain-English reply that actually helps them find or understand what's
-  being asked, and tell them what to type. Never treat a question-back as the
-  answer, and never end the conversation on it."""
+- If they ask a question back ("where do I find that?", "what do you mean?") or
+  express confusion, that is NOT an answer. Write a short, warm, plain-English
+  reply that helps them, and tell them what to type. Never treat a question-back
+  as the answer, and never end the conversation on it.
+- If they ask you to FIND, LOOK UP, SEARCH FOR, or RETRIEVE the document (and a
+  web_search is available for this question), search for it and give them the
+  actual document URL in your message. Only offer a URL you actually see in the
+  search results — never invent one. Prefer the vendor's own official page."""
+
+# Open-text questions where the bot may search the web to fetch the document.
+SEARCH_QUESTIONS = {"vendor_privacy_policy_url"}
 
 
-def _assist_tool():
+def _web_search(query, max_results=5):
+    """Keyless DuckDuckGo search. Returns [{title,url,snippet}] (empty on failure).
+
+    Swap the provider here (Tavily/Brave/Serper with an API key) if you want
+    higher reliability than the keyless endpoint in production.
+    """
+    try:
+        from ddgs import DDGS
+
+        with DDGS() as d:
+            rows = list(d.text(query, max_results=max_results))
+    except Exception:
+        return []
+    out = []
+    for r in rows:
+        url = r.get("href") or r.get("url") or ""
+        if url:
+            out.append({
+                "title": (r.get("title") or "")[:120],
+                "url": url,
+                "snippet": (r.get("body") or "")[:200],
+            })
+    return out
+
+
+def _registrable_domain(url):
+    """example.com from https://cdn.example.com/x — used to validate search hits."""
+    try:
+        import urllib.parse
+        netloc = urllib.parse.urlparse(url).netloc.lower()
+        if netloc.startswith("www."):
+            netloc = netloc[4:]
+        return ".".join(netloc.split(".")[-2:])
+    except Exception:
+        return ""
+
+
+def _assist_tool(can_search=False):
+    props = {
+        "is_answer": {"type": "boolean"},
+        "message": {
+            "type": "string",
+            "description": "If is_answer is false, a short helpful reply. If you found the document via search, put its URL here.",
+        },
+    }
+    if can_search:
+        props["needs_search"] = {
+            "type": "boolean",
+            "description": "True if the requester asked you to find/look up/retrieve the document and you should search the web for it.",
+        }
+        props["search_query"] = {
+            "type": ["string", "null"],
+            "description": "The web query to run when needs_search is true, e.g. 'DeepSeek privacy policy'.",
+        }
+        props["suggested_value"] = {
+            "type": ["string", "null"],
+            "description": "When you found the document via search, put its exact URL here to pre-fill it for the requester. Null otherwise.",
+        }
     return {
         "name": "record_assist",
-        "description": "Decide whether the reply is a real answer or a request for help.",
+        "description": "Decide whether the reply is a real answer, a request for help, or a request to search the web.",
         "input_schema": {
             "type": "object",
-            "properties": {
-                "is_answer": {"type": "boolean"},
-                "message": {
-                    "type": "string",
-                    "description": "If is_answer is false, a short helpful reply guiding them to an answer.",
-                },
-            },
+            "properties": props,
             "required": ["is_answer", "message"],
         },
     }
 
 
-def assist_open_text(question_id, question_text, reply, intake_context=None):
-    """One assist turn for an open-text question. Returns {is_answer, message}."""
-    reply = (reply or "").strip()
-    # Pasted URL or explicit short opt-out -> definitely an answer, skip the model.
-    low = reply.lower()
-    if re.match(r"https?://", low) or low in {"no", "none", "n/a", "na", "not sure", "unsure", "nope"}:
-        return {"is_answer": True, "message": ""}
-
-    if (MODE or "").lower() == "mock":
-        # Offline: treat a reply ending in '?' or containing confusion words as a question.
-        looks_confused = reply.endswith("?") or any(
-            w in low for w in ["where", "what do you mean", "how do i", "not sure what", "don't understand", "dont understand"]
-        )
-        if looks_confused:
-            hint = HELP_HINTS.get(question_id, {})
-            msg = hint.get("help", "Here's what this is asking — take your best guess, or say what you know.")
-            if hint.get("opt_out"):
-                msg += f" If it doesn't apply, you can just type {hint['opt_out']}."
-            return {"is_answer": False, "message": msg}
-        return {"is_answer": True, "message": ""}
-
+def _assist_invoke(question_id, question_text, reply, intake_context, search_results=None):
     import boto3
 
+    can_search = question_id in SEARCH_QUESTIONS
     hint = HELP_HINTS.get(question_id, {})
     guide = ""
     if hint.get("help"):
@@ -604,30 +642,102 @@ def assist_open_text(question_id, question_text, reply, intake_context=None):
         ctx = "\nContext from the form: " + ", ".join(
             f"{k}={v}" for k, v in intake_context.items() if v
         )
+    search_block = ""
+    if search_results is not None:
+        if search_results:
+            lines = "\n".join(f'- {r["title"]} — {r["url"]}' for r in search_results)
+            search_block = (
+                "\n\nWeb search results below. Pick the correct OFFICIAL document URL (prefer the "
+                "vendor's own domain). Then: set is_answer=false, put that URL in suggested_value, "
+                "set needs_search=false, and write a short message saying you found it and dropped "
+                "the link in for them to use (they can clear it if it's wrong). Do NOT set "
+                f"is_answer=true — they still need to confirm it.\n{lines}"
+            )
+        else:
+            search_block = (
+                "\n\nThe web search found nothing usable. Tell them you couldn't fetch it "
+                "automatically, guide them to the site footer, and set needs_search=false."
+            )
+    elif can_search:
+        search_block = (
+            "\n\nIf the requester is asking you to find/look up/search for/retrieve the document, "
+            "set needs_search=true and give a search_query using the vendor/software name from "
+            "context. Otherwise set needs_search=false."
+        )
     user = (
         f'The question: "{question_text}"{ctx}{guide}\n\n'
-        f'The requester replied:\n"""{reply}"""\n\nCall record_assist.'
+        f'The requester replied:\n"""{reply}"""{search_block}\n\nCall record_assist.'
     )
     client = boto3.client("bedrock-runtime", region_name=REGION)
     body = {
         "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 400,
+        "max_tokens": 500,
         "system": _ASSIST_SYSTEM,
         "messages": [{"role": "user", "content": user}],
-        "tools": [_assist_tool()],
+        "tools": [_assist_tool(can_search)],
         "tool_choice": {"type": "tool", "name": "record_assist"},
     }
     resp = client.invoke_model(modelId=MODEL_ID, body=json.dumps(body))
     payload = json.loads(resp["body"].read())
     for blk in payload.get("content", []):
         if blk.get("type") == "tool_use" and blk.get("name") == "record_assist":
-            raw = blk["input"]
-            is_ans = bool(raw.get("is_answer", True))
-            return {
-                "is_answer": is_ans,
-                "message": "" if is_ans else str(raw.get("message", ""))[:600],
-            }
-    return {"is_answer": True, "message": ""}  # fail open: accept the answer
+            return blk["input"]
+    return {"is_answer": True, "message": ""}
+
+
+def assist_open_text(question_id, question_text, reply, intake_context=None):
+    """One assist turn for an open-text question. Returns {is_answer, message}.
+
+    For document questions (SEARCH_QUESTIONS), if the requester asks the bot to
+    find/retrieve the document, it runs a real web search and returns the URL.
+    """
+    reply = (reply or "").strip()
+    # Pasted URL or explicit short opt-out -> definitely an answer, skip the model.
+    low = reply.lower()
+    if re.match(r"https?://", low) or low in {"no", "none", "n/a", "na", "not sure", "unsure", "nope"}:
+        return {"is_answer": True, "message": ""}
+
+    if (MODE or "").lower() == "mock":
+        looks_confused = reply.endswith("?") or any(
+            w in low for w in ["where", "what do you mean", "how do i", "not sure what",
+                               "don't understand", "dont understand", "search", "find", "retrieve", "look up"]
+        )
+        if looks_confused:
+            hint = HELP_HINTS.get(question_id, {})
+            msg = hint.get("help", "Here's what this is asking — take your best guess, or say what you know.")
+            if hint.get("opt_out"):
+                msg += f" If it doesn't apply, you can just type {hint['opt_out']}."
+            return {"is_answer": False, "message": msg}
+        return {"is_answer": True, "message": ""}
+
+    raw = _assist_invoke(question_id, question_text, reply, intake_context)
+
+    # If the model wants to search (and this question supports it), do it and re-ask
+    # with the results so it can hand back the actual document URL.
+    if question_id in SEARCH_QUESTIONS and raw.get("needs_search"):
+        vendor = (intake_context or {}).get("software_name") or ""
+        query = raw.get("search_query") or (f"{vendor} privacy policy" if vendor else "privacy policy")
+        results = _web_search(query)
+        raw = _assist_invoke(question_id, question_text, reply, intake_context, search_results=results)
+        # Anti-hallucination: only trust a suggested URL whose domain actually
+        # appeared in the real search results — never a plausible-looking guess.
+        sv = raw.get("suggested_value")
+        if sv:
+            allowed = {_registrable_domain(r["url"]) for r in results}
+            if _registrable_domain(sv) not in allowed or not allowed:
+                raw["suggested_value"] = None
+                raw["message"] = (
+                    "I searched but couldn't confirm the official link with confidence. "
+                    "Try the vendor's website footer for 'Privacy Policy', or just type \"not sure\"."
+                )
+
+    is_ans = bool(raw.get("is_answer", True))
+    suggested = None if is_ans else raw.get("suggested_value")
+    return {
+        "is_answer": is_ans,
+        "message": "" if is_ans else str(raw.get("message", ""))[:800],
+        "suggested_value": suggested or None,
+    }
 
 
 # ---- Software-name matching against the SDSU catalog -----------------------
