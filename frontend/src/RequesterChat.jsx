@@ -96,7 +96,7 @@ const STEPS = [
   {
     id: "ai_capabilities",
     label: "AI",
-    bot: "Does this software use artificial intelligence — for example, generating content, giving recommendations, scoring, or making automated decisions?",
+    bot: "Does this software use AI? For example, it writes or makes things for you, answers questions, gives suggestions, or figures things out on its own.",
     type: "choice",
     options: [
       { label: "Yes", value: "yes" },
@@ -115,7 +115,7 @@ const STEPS = [
   {
     id: "ai_automated_decisions",
     label: "AI",
-    bot: "Will it be used to help make decisions about people — like admissions, grading, hiring, financial aid, or evaluating individuals?",
+    bot: "Does it help decide things about people — like who gets admitted or hired, who receives financial aid, or what grade someone gets?",
     type: "choice",
     options: [
       { label: "Yes", value: "yes" },

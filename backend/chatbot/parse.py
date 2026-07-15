@@ -112,14 +112,14 @@ OPTION_GUIDE = {
         ("100+", "A large group — more than 100 people."),
     ],
     "ai_capabilities": [
-        ("yes", "Yes — it uses AI, like generating text/images, giving recommendations, scoring, or making automated decisions."),
-        ("no", "No — it has no AI features."),
+        ("yes", "Yes — it uses AI: it writes or makes things, answers questions, gives suggestions, or figures things out on its own."),
+        ("no", "No — it has no AI features; it just does what you tell it."),
         ("unsure", "Not sure whether it uses AI."),
     ],
     "ai_automated_decisions": [
-        ("yes", "Yes — it helps decide something about people (admissions, grades, hiring, financial aid, evaluating individuals)."),
-        ("no", "No — it doesn't make or support decisions about people."),
-        ("unsure", "Not sure whether it makes decisions about people."),
+        ("yes", "Yes — it helps decide things about people (who gets admitted or hired, who gets financial aid, or what grade someone gets)."),
+        ("no", "No — it doesn't help make choices about people."),
+        ("unsure", "Not sure whether it helps make choices about people."),
     ],
 }
 # The nine sensitive-data questions are all simple yes/no.
