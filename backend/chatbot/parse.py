@@ -449,6 +449,12 @@ def converse(question_id, question_text, history, intake_context=None):
     _, guidance = _load_prompt_section(q["prompt_section"])
     if question_id in INTEGRATION_QUESTIONS:
         guidance += _campus_systems_context()
+    if question_id == "shares_data_with_campus_system":
+        guidance += (
+            "\n\nIMPORTANT: a plain \"yes\", \"no\", or \"not sure\" is a COMPLETE answer "
+            "to THIS question — resolve it right away and confirm. Do NOT ask which system "
+            "or what data would be shared; a separate later question covers that."
+        )
     user_attempts = sum(1 for h in history if h.get("role") == "user")
     ctx = ""
     if intake_context:
