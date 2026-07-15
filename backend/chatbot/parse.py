@@ -163,6 +163,20 @@ HELP_HINTS = {
                 "grades on student quizzes.' Even a rough description helps.",
         "opt_out": None,
     },
+    "vendor_tos_url": {
+        "help": "The Terms of Service (sometimes 'Terms of Use' or 'Terms & "
+                "Conditions') is usually linked in the footer of the vendor's "
+                "website. Paste the link, or ask me to find it for you.",
+        "opt_out": '"not sure"',
+    },
+    "vendor_accessibility_url": {
+        "help": "This is the vendor's accessibility documentation — often called "
+                "a VPAT or Accessibility Conformance Report — showing the software "
+                "works with screen readers and assistive tech. Check the vendor's "
+                "site (an 'Accessibility' or 'Trust' page), paste a link, or ask "
+                "me to find it.",
+        "opt_out": '"not sure"',
+    },
 }
 
 
@@ -554,8 +568,24 @@ question, or are they asking you to FIND a document for them?
   actual document URL in your message. Only offer a URL you actually see in the
   search results — never invent one. Prefer the vendor's own official page."""
 
-# Open-text questions where the bot may search the web to fetch the document.
-SEARCH_QUESTIONS = {"vendor_privacy_policy_url"}
+# Open-text chatbot questions where the bot may search the web to fetch the
+# document, mapped to the kind of document to look for.
+DOC_SEARCH = {
+    "vendor_privacy_policy_url": "privacy policy",
+    "vendor_tos_url": "terms of service",
+    "vendor_accessibility_url": "VPAT accessibility conformance report",
+}
+SEARCH_QUESTIONS = set(DOC_SEARCH)  # membership checks throughout the assist flow
+
+# Document types the reviewer-side finder (find_document / POST /chatbot/find-document)
+# can look for — includes the security docs the discovery call named (HECVAT, SOC 2).
+REVIEWER_DOC_TYPES = {
+    "privacy_policy": "privacy policy",
+    "terms_of_service": "terms of service",
+    "vpat": "VPAT accessibility conformance report",
+    "hecvat": "HECVAT security assessment questionnaire",
+    "soc2": "SOC 2 report",
+}
 
 
 def _web_search(query, max_results=5):
@@ -716,7 +746,8 @@ def assist_open_text(question_id, question_text, reply, intake_context=None):
     # with the results so it can hand back the actual document URL.
     if question_id in SEARCH_QUESTIONS and raw.get("needs_search"):
         vendor = (intake_context or {}).get("software_name") or ""
-        query = raw.get("search_query") or (f"{vendor} privacy policy" if vendor else "privacy policy")
+        doc_label = DOC_SEARCH.get(question_id, "privacy policy")
+        query = raw.get("search_query") or (f"{vendor} {doc_label}" if vendor else doc_label)
         results = _web_search(query)
         raw = _assist_invoke(question_id, question_text, reply, intake_context, search_results=results)
         # Anti-hallucination: only trust a suggested URL whose domain actually
@@ -738,6 +769,80 @@ def assist_open_text(question_id, question_text, reply, intake_context=None):
         "message": "" if is_ans else str(raw.get("message", ""))[:800],
         "suggested_value": suggested or None,
     }
+
+
+# ---- Reviewer-side vendor-document finder -----------------------------------
+# Searches the web for a specific vendor document and returns the best OFFICIAL
+# public URL, domain-validated. Covers the security docs the discovery call named
+# (HECVAT, SOC 2) plus privacy policy / ToS / VPAT. Note: SOC 2 reports are often
+# NOT public (frequently under NDA), so "not found" is a common, honest result —
+# Michael Farley's ask was specifically to pull one "if publicly available."
+_PICK_SYSTEM = """You are given real web search results for a specific vendor document. Pick the
+single best URL that is the OFFICIAL document — prefer the vendor's own domain or
+an authoritative public copy. If none of the results is clearly that document,
+set found=false. Never invent a URL; only choose from the results shown."""
+
+
+def find_document(vendor_name, doc_type="privacy_policy"):
+    """Find a public vendor document. Returns
+    {found, url, title, doc_type, note, results}."""
+    vendor_name = (vendor_name or "").strip()
+    label = REVIEWER_DOC_TYPES.get(doc_type, doc_type)
+    empty = {"found": False, "url": None, "title": None, "doc_type": doc_type,
+             "note": "", "results": []}
+    if not vendor_name:
+        return {**empty, "note": "No vendor name provided."}
+
+    results = _web_search(f"{vendor_name} {label}")
+    if not results:
+        return {**empty, "note": "No search results."}
+    if (MODE or "").lower() == "mock":
+        top = results[0]
+        return {"found": True, "url": top["url"], "title": top["title"],
+                "doc_type": doc_type, "note": "top result (offline)", "results": results}
+
+    import boto3
+
+    lines = "\n".join(f'- {r["title"]} — {r["url"]}\n  {r["snippet"]}' for r in results)
+    tool = {
+        "name": "record_pick",
+        "description": "Pick the best official document URL from the results.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "found": {"type": "boolean"},
+                "url": {"type": ["string", "null"]},
+                "note": {"type": "string"},
+            },
+            "required": ["found", "note"],
+        },
+    }
+    user = (f'Vendor: {vendor_name}\nDocument wanted: {label}\n\n'
+            f'Search results:\n{lines}\n\nCall record_pick.')
+    client = boto3.client("bedrock-runtime", region_name=REGION)
+    body = {
+        "anthropic_version": "bedrock-2023-05-31", "max_tokens": 300,
+        "system": _PICK_SYSTEM,
+        "messages": [{"role": "user", "content": user}],
+        "tools": [tool], "tool_choice": {"type": "tool", "name": "record_pick"},
+    }
+    resp = client.invoke_model(modelId=MODEL_ID, body=json.dumps(body))
+    payload = json.loads(resp["body"].read())
+    pick = {}
+    for blk in payload.get("content", []):
+        if blk.get("type") == "tool_use" and blk.get("name") == "record_pick":
+            pick = blk["input"]
+            break
+
+    url = pick.get("url") if pick.get("found") else None
+    # Domain guard: only trust a URL whose domain actually appeared in results.
+    allowed = {_registrable_domain(r["url"]) for r in results}
+    if url and _registrable_domain(url) in allowed:
+        title = next((r["title"] for r in results if r["url"] == url), "")
+        return {"found": True, "url": url, "title": title, "doc_type": doc_type,
+                "note": str(pick.get("note", ""))[:300], "results": results}
+    return {**empty, "note": str(pick.get("note", "")) or "No confident match in results.",
+            "results": results}
 
 
 # ---- Software-name matching against the SDSU catalog -----------------------

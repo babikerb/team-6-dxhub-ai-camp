@@ -244,7 +244,21 @@ const STEPS = [
   {
     id: "vendor_privacy_policy_url",
     label: "Vendor",
-    bot: 'Do you have a link to the vendor\'s privacy policy? Paste it, or say "not sure."',
+    bot: 'Do you have a link to the vendor\'s privacy policy? Paste it, ask me to find it, or say "not sure."',
+    type: "text",
+    placeholder: "https:// ... or 'not sure'",
+  },
+  {
+    id: "vendor_tos_url",
+    label: "Vendor",
+    bot: 'Do you have a link to the vendor\'s Terms of Service (or Terms of Use)? Paste it, ask me to find it, or say "not sure."',
+    type: "text",
+    placeholder: "https:// ... or 'not sure'",
+  },
+  {
+    id: "vendor_accessibility_url",
+    label: "Vendor",
+    bot: 'Does the vendor have accessibility documentation — sometimes called a VPAT — showing the software works with screen readers and assistive tech? Paste a link, ask me to find it, or say "not sure."',
     type: "text",
     placeholder: "https:// ... or 'not sure'",
   },

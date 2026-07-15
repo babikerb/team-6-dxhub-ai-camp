@@ -8,6 +8,8 @@ const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 // answer (so "where do I find that?" doesn't get saved as the answer).
 export const ASSISTED_TEXT = new Set([
   "vendor_privacy_policy_url",
+  "vendor_tos_url",
+  "vendor_accessibility_url",
   "integration_explanation",
   "other_data_category",
   "compliance_requirements",
