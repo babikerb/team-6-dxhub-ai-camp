@@ -70,6 +70,14 @@ QUESTIONS = {
         "enum": ["yes", "no", "unsure"],
         "prompt_section": "sso_capable",
     },
+    "ai_capabilities": {
+        "enum": ["yes", "no", "unsure"],
+        "prompt_section": "ai_capabilities",
+    },
+    "ai_automated_decisions": {
+        "enum": ["yes", "no", "unsure"],
+        "prompt_section": "ai_automated_decisions",
+    },
     # data-category yes/no questions all share the same shape
     **{
         q: {"enum": ["yes", "no", "unsure"], "prompt_section": "data-category blocks"}
@@ -102,6 +110,16 @@ OPTION_GUIDE = {
         ("1-30", "A small group — up to about 30 people."),
         ("30-100", "A medium group — roughly 30 to 100 people."),
         ("100+", "A large group — more than 100 people."),
+    ],
+    "ai_capabilities": [
+        ("yes", "Yes — it uses AI, like generating text/images, giving recommendations, scoring, or making automated decisions."),
+        ("no", "No — it has no AI features."),
+        ("unsure", "Not sure whether it uses AI."),
+    ],
+    "ai_automated_decisions": [
+        ("yes", "Yes — it helps decide something about people (admissions, grades, hiring, financial aid, evaluating individuals)."),
+        ("no", "No — it doesn't make or support decisions about people."),
+        ("unsure", "Not sure whether it makes decisions about people."),
     ],
 }
 # The nine sensitive-data questions are all simple yes/no.
@@ -138,6 +156,12 @@ HELP_HINTS = {
                 "research grant's rules, an international privacy law, or a "
                 "contract requirement. If you don't know of any, that's fine.",
         "opt_out": '"no"',
+    },
+    "ai_use_description": {
+        "help": "Describe in your own words what the AI part does and how you'd "
+                "use it — for example, 'it drafts email replies' or 'it suggests "
+                "grades on student quizzes.' Even a rough description helps.",
+        "opt_out": None,
     },
 }
 

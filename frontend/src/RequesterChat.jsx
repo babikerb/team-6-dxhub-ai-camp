@@ -91,6 +91,39 @@ const STEPS = [
       { label: "Not sure", value: "unsure" },
     ],
   },
+  // AI capabilities — California Automated Decision System (ADS) tracking, AB 302.
+  // Captured up front so SDSU can inventory AI/ADS software instead of after the fact.
+  {
+    id: "ai_capabilities",
+    label: "AI",
+    bot: "Does this software use artificial intelligence — for example, generating content, giving recommendations, scoring, or making automated decisions?",
+    type: "choice",
+    options: [
+      { label: "Yes", value: "yes" },
+      { label: "No", value: "no" },
+      { label: "Not sure", value: "unsure" },
+    ],
+  },
+  {
+    id: "ai_use_description",
+    label: "AI",
+    bot: "What do those AI features do, and how do you plan to use them?",
+    type: "text",
+    placeholder: "e.g. drafts email replies; suggests grades on quizzes",
+    skip: (a) => a.ai_capabilities !== "yes",
+  },
+  {
+    id: "ai_automated_decisions",
+    label: "AI",
+    bot: "Will it be used to help make decisions about people — like admissions, grading, hiring, financial aid, or evaluating individuals?",
+    type: "choice",
+    options: [
+      { label: "Yes", value: "yes" },
+      { label: "No", value: "no" },
+      { label: "Not sure", value: "unsure" },
+    ],
+    skip: (a) => a.ai_capabilities !== "yes",
+  },
   // Block A — always asked
   {
     id: "la_health",
@@ -267,6 +300,19 @@ export function evaluate(a) {
   const integration_flag_reason =
     a.integration_explanation || (integration_flag ? "Shares data with another campus system" : null);
 
+  // AI / Automated Decision System tracking (California AB 302). ai_flag marks
+  // any AI-enabled software; the reason calls out the high-risk ADS subset
+  // (used to make decisions about people) that goes on the state inventory.
+  const ai_flag = a.ai_capabilities === "yes";
+  let ai_flag_reason;
+  if (a.ai_automated_decisions === "yes") {
+    ai_flag_reason = "AI-enabled automated decision system — California ADS inventory (AB 302)";
+  } else if (ai_flag) {
+    ai_flag_reason = "AI-enabled software";
+  } else {
+    ai_flag_reason = "No AI capabilities reported";
+  }
+
   return {
     ati_flag,
     ati_flag_reason,
@@ -275,6 +321,8 @@ export function evaluate(a) {
     risk_level,
     integration_flag,
     integration_flag_reason,
+    ai_flag,
+    ai_flag_reason,
   };
 }
 

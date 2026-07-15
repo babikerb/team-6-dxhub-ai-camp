@@ -11,6 +11,7 @@ export const ASSISTED_TEXT = new Set([
   "integration_explanation",
   "other_data_category",
   "compliance_requirements",
+  "ai_use_description",
 ]);
 
 // Question ids the parser understands (must match parse.py QUESTIONS keys).
@@ -20,6 +21,8 @@ export const PARSEABLE = new Set([
   "estimated_users",
   "interaction_method",
   "sso_capable",
+  "ai_capabilities",
+  "ai_automated_decisions",
   "la_health", "la_pii", "la_payment", "la_lawenforcement",
   "lb_coursework", "lb_employee", "lb_budget", "lb_research", "lb_legal",
 ]);

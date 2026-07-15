@@ -138,6 +138,27 @@ all three, but lower confidence.
 - **unsure** — requester doesn't know. This one is genuinely often `unsure`;
   that's fine and expected.
 
+### Q: ai_capabilities
+**Fixed options:** `yes` · `no` · `unsure`
+Captured for California's Automated Decision System inventory (AB 302). Map on
+the substance of what they describe, not on whether they use the word "AI."
+- **yes** — the software generates content, gives recommendations, scores/ranks,
+  predicts, or automates decisions (chatbots, generative AI, ML, "smart"/"auto"
+  features, recommendation engines).
+- **no** — a conventional tool with no such features (plain storage, a form, a
+  calculator, basic productivity software).
+- **unsure** — they don't know. Common and fine.
+
+### Q: ai_automated_decisions
+**Fixed options:** `yes` · `no` · `unsure`
+This is the *high-risk ADS* trigger — whether the AI helps make consequential
+decisions **about people**.
+- **yes** — used to help decide admissions, grading, hiring/employment, financial
+  aid, benefits, discipline, or otherwise evaluate/rank individuals.
+- **no** — the AI only touches content or operations, not decisions about people
+  (e.g. drafting text, summarizing documents, generating images).
+- **unsure** — they don't know.
+
 ### Q: data-category blocks (health / personal-ID / payment / law-enforcement / coursework / employee / budget / research-IP / legal)
 Each is a yes/no about whether the software touches that kind of information.
 **Options:** `yes` · `no` · `unsure`. Map on the *meaning* of the data
