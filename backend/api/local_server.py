@@ -22,6 +22,7 @@ from handlers import (
     admin_patch,
     chatbot_assist,
     chatbot_converse,
+    chatbot_match,
     chatbot_parse,
     chatbot_patch,
     create_request,
@@ -105,6 +106,12 @@ async def chatbot_converse_route(request: Request):
 async def chatbot_assist_route(request: Request):
     event = await _to_event(request)
     return _from_lambda_response(chatbot_assist.handler(event))
+
+
+@app.post("/chatbot/match-software")
+async def chatbot_match_route(request: Request):
+    event = await _to_event(request)
+    return _from_lambda_response(chatbot_match.handler(event))
 
 
 @app.get("/health")

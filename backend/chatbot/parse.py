@@ -630,6 +630,160 @@ def assist_open_text(question_id, question_text, reply, intake_context=None):
     return {"is_answer": True, "message": ""}  # fail open: accept the answer
 
 
+# ---- Software-name matching against the SDSU catalog -----------------------
+# Two jobs in one call: (1) is the requested software the same as (a variant/
+# typo/edition/rebrand of) something SDSU already offers? (2) if not, which
+# approved catalog apps serve the same purpose (suggest alternatives)?
+_CATALOG_FILE = _HERE / "sdsu_catalog.json"
+
+_MATCH_SYSTEM = """You match a requested software name against San Diego State University's
+approved software catalog. Judge by MEANING, not just spelling. Do two things:
+
+1. Decide whether the requested software IS the same product as — or a variant,
+   edition, typo, abbreviation, or rebrand of — an app in the catalog. Examples:
+   "MS Word" / "Microsoft Word" -> Microsoft 365; "Photoshop" -> Creative Cloud;
+   "Zooom" (typo) -> Zoom. "Claude Code" is NOT any catalog app.
+2. If it is NOT in the catalog, pick the catalog apps that serve the SAME
+   purpose as sensible approved alternatives (e.g. a request for "Claude" or
+   "Notion AI" -> the catalog's AI assistants). Only ever name apps that are
+   actually in the catalog provided. If nothing fits, return none.
+
+Be conservative on (1): only call it a match when you're confident it's the same
+product, not merely similar."""
+
+
+def _load_catalog(catalog=None):
+    if catalog:
+        return catalog
+    if _CATALOG_FILE.exists():
+        return json.loads(_CATALOG_FILE.read_text(encoding="utf-8"))
+    return []
+
+
+def _match_tool(catalog):
+    names = [e["name"] for e in catalog]
+    return {
+        "name": "record_match",
+        "description": "Record the catalog match and any alternatives.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": ["offered", "alternative_available", "not_found"],
+                },
+                "matched_name": {"type": ["string", "null"], "enum": names + [None]},
+                "match_confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                "alternatives": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "enum": names},
+                            "why": {"type": "string"},
+                        },
+                        "required": ["name", "why"],
+                    },
+                },
+                "reasoning": {"type": "string"},
+            },
+            "required": ["status", "match_confidence", "alternatives", "reasoning"],
+        },
+    }
+
+
+def match_software(software_name, use_description=None, catalog=None):
+    """Match a requested software name against the SDSU catalog.
+
+    Returns {status, matched_name, match_confidence, alternatives, reasoning}
+      status "offered"               -> SDSU already provides it (matched_name)
+      status "alternative_available" -> not offered, but alternatives exist
+      status "not_found"             -> not offered and no close alternative
+    """
+    software_name = (software_name or "").strip()
+    catalog = _load_catalog(catalog)
+    if not software_name:
+        return {"status": "not_found", "matched_name": None, "match_confidence": 0.0,
+                "alternatives": [], "reasoning": "No software name provided."}
+
+    if (MODE or "").lower() == "mock":
+        return _match_mock(software_name, catalog)
+
+    import boto3
+
+    catalog_text = "\n".join(
+        f'- {e["name"]} ({e.get("category","?")}): {e.get("description","")} '
+        f'[also called: {", ".join(e.get("aliases", []))}]'
+        for e in catalog
+    )
+    ctx = f'\nWhat they plan to use it for: {use_description}' if use_description else ""
+    user = (
+        f'SDSU approved software catalog:\n{catalog_text}\n\n'
+        f'Requested software: "{software_name}"{ctx}\n\n'
+        "Call record_match. If it's clearly one of the catalog apps, status "
+        "'offered'. If not but same-purpose catalog apps exist, "
+        "'alternative_available' with those. Otherwise 'not_found'."
+    )
+    client = boto3.client("bedrock-runtime", region_name=REGION)
+    body = {
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": 600,
+        "system": _MATCH_SYSTEM,
+        "messages": [{"role": "user", "content": user}],
+        "tools": [_match_tool(catalog)],
+        "tool_choice": {"type": "tool", "name": "record_match"},
+    }
+    resp = client.invoke_model(modelId=MODEL_ID, body=json.dumps(body))
+    payload = json.loads(resp["body"].read())
+    for blk in payload.get("content", []):
+        if blk.get("type") == "tool_use" and blk.get("name") == "record_match":
+            return _normalize_match(blk["input"], catalog)
+    return {"status": "not_found", "matched_name": None, "match_confidence": 0.0,
+            "alternatives": [], "reasoning": "No match determined."}
+
+
+def _normalize_match(raw, catalog):
+    names = {e["name"] for e in catalog}
+    status = raw.get("status")
+    matched = raw.get("matched_name")
+    if matched not in names:
+        matched = None
+    alts = [
+        {"name": a.get("name"), "why": str(a.get("why", ""))[:200]}
+        for a in (raw.get("alternatives") or [])
+        if isinstance(a, dict) and a.get("name") in names
+    ]
+    if status not in ("offered", "alternative_available", "not_found"):
+        status = "offered" if matched else ("alternative_available" if alts else "not_found")
+    # keep status and payload consistent
+    if status == "offered" and not matched:
+        status = "alternative_available" if alts else "not_found"
+    if status == "alternative_available" and not alts:
+        status = "not_found"
+    try:
+        conf = float(raw.get("match_confidence", 0.0))
+    except (TypeError, ValueError):
+        conf = 0.0
+    return {
+        "status": status,
+        "matched_name": matched,
+        "match_confidence": max(0.0, min(1.0, conf)),
+        "alternatives": alts[:3],
+        "reasoning": str(raw.get("reasoning", ""))[:300],
+    }
+
+
+def _match_mock(software_name, catalog):
+    q = re.sub(r"[^a-z0-9 ]", "", software_name.lower()).strip()
+    for e in catalog:
+        cand = [e["name"].lower()] + [a.lower() for a in e.get("aliases", [])]
+        if any(q == c or (len(c) >= 4 and (q in c or c in q)) for c in cand):
+            return {"status": "offered", "matched_name": e["name"], "match_confidence": 0.9,
+                    "alternatives": [], "reasoning": f"Matches catalog app {e['name']} (offline heuristic)."}
+    return {"status": "not_found", "matched_name": None, "match_confidence": 0.0,
+            "alternatives": [], "reasoning": "No offline match; run with Bedrock for alternatives."}
+
+
 def next_cascade_action(result):
     """Map a parse result to the frontend's next move (see bedrock_prompt.md)."""
     if result["answer"] == "unsure" or (
