@@ -115,7 +115,7 @@ const SECTIONS = [
         type: "text",
         required: false,
         placeholder: "Comma-separated names or emails",
-        hint: "Optional — separate multiple people with commas.",
+        hint: "Optional. Separate multiple people with commas.",
       },
       {
         id: "additional_details",
@@ -243,9 +243,14 @@ function PillGroup({ options, value, multi, onSelect }) {
             type="button"
             key={String(opt.value)}
             onClick={() => onSelect(opt.value)}
-            style={{ ...styles.pillButton, ...(active ? styles.pillButtonActive : null) }}
+            style={{
+              ...styles.pillButton,
+              borderLeftColor: active ? "var(--red)" : "transparent",
+              background: active ? "var(--paper-alt)" : "transparent",
+            }}
           >
-            {opt.label}
+            <span>{opt.label}</span>
+            <span style={{ ...styles.pillMark, opacity: active ? 1 : 0.25 }}>{active ? "✓" : "○"}</span>
           </button>
         );
       })}
@@ -260,7 +265,7 @@ function CatalogCard({ match }) {
       <div style={styles.catalogCardMeta}>{match.developer} · {match.category}</div>
       <div style={styles.catalogCardDesc}>{match.description}</div>
       <a href={match.url} target="_blank" rel="noreferrer" style={styles.catalogCardLink}>
-        View on SDSU IT catalog →
+        View on SDSU IT catalog &rarr;
       </a>
     </div>
   );
@@ -462,7 +467,6 @@ function IntakeForm({ onSubmitted }) {
   function renderQuestion() {
     const group = STEPS[stepIndex];
     const total = STEPS.length;
-    const progressPct = Math.round(((stepIndex + 1) / total) * 100);
 
     return (
       <div style={styles.body}>
@@ -470,8 +474,26 @@ function IntakeForm({ onSubmitted }) {
           <div style={styles.stepBadge}>{group.title}</div>
           <div style={styles.stepCount}>Step {stepIndex + 1} of {total}</div>
         </div>
-        <div style={styles.progressBarOuter}>
-          <div style={{ ...styles.progressBarInner, width: `${progressPct}%` }} />
+        <div style={styles.dotsWrap}>
+          {STEPS.map((s, i) => (
+            <div key={s.title + i} style={styles.dotUnit}>
+              <div
+                style={{
+                  ...styles.dot,
+                  background: i < stepIndex ? "var(--red)" : i === stepIndex ? "#fff" : "var(--paper-alt)",
+                  borderColor: i <= stepIndex ? "var(--red)" : "var(--line)",
+                }}
+              />
+              {i < STEPS.length - 1 && (
+                <div
+                  style={{
+                    ...styles.dotLine,
+                    background: i < stepIndex ? "var(--red)" : "var(--line)",
+                  }}
+                />
+              )}
+            </div>
+          ))}
         </div>
 
         <div style={styles.section}>
@@ -484,7 +506,7 @@ function IntakeForm({ onSubmitted }) {
                   {field.required && <span style={styles.required}> *</span>}
                 </label>
                 {field.type === "multiChoice" && (
-                  <div style={styles.multiHint}>Select all that apply — you can choose more than one.</div>
+                  <div style={styles.multiHint}>Select all that apply. You can choose more than one.</div>
                 )}
                 {renderInput(field)}
                 {field.hint && !errors[field.id] && <div style={styles.hint}>{field.hint}</div>}
@@ -514,7 +536,8 @@ function IntakeForm({ onSubmitted }) {
   function renderCatalogMatch() {
     return (
       <div style={styles.body}>
-        <div style={styles.catalogHeading}>Good news — this might already be available</div>
+        <div style={styles.catalogEyebrow}>Catalog match found</div>
+        <div style={styles.catalogHeading}>This might already be available</div>
         <div style={styles.catalogSubheading}>
           Based on "{form.software_name}", SDSU already provides software that may cover this need:
         </div>
@@ -523,12 +546,14 @@ function IntakeForm({ onSubmitted }) {
             <CatalogCard key={m.name} match={m} />
           ))}
         </div>
-        <button type="button" onClick={endAsCatalogMatch} style={styles.nextButton}>
-          This covers it — I don't need to submit a request
-        </button>
-        <button type="button" onClick={continueAfterCatalogMatch} style={styles.continueLink}>
-          None of these fit — continue my request anyway
-        </button>
+        <div style={styles.catalogActions}>
+          <button type="button" onClick={endAsCatalogMatch} style={styles.nextButton}>
+            This covers it. I don't need to submit a request
+          </button>
+          <button type="button" onClick={continueAfterCatalogMatch} style={styles.continueLink}>
+            None of these fit. Continue my request anyway
+          </button>
+        </div>
       </div>
     );
   }
@@ -601,10 +626,10 @@ function IntakeForm({ onSubmitted }) {
       <div style={styles.body}>
         <div style={styles.catalogHeading}>Request received</div>
         <div style={styles.catalogSubheading}>
-          Save this incident ID before continuing — you'll need it to check on your request later.
+          Save this procurement ID before continuing. You'll need it to check on your request later.
         </div>
-        <div style={styles.incidentBox}>
-          <div style={styles.incidentId}>{requestId}</div>
+        <div style={styles.procurementBox}>
+          <div style={styles.procurementId}>{requestId}</div>
           <button type="button" onClick={copyRequestId} style={styles.copyButton}>
             {copied ? "Copied ✓" : "Copy"}
           </button>
@@ -623,7 +648,7 @@ function IntakeForm({ onSubmitted }) {
           <div style={styles.headerBadge}>SDSU</div>
           <div>
             <div style={styles.headerTitle}>Software Request Assistant</div>
-            <div style={styles.headerSubtitle}>Intake form — a few questions at a time</div>
+            <div style={styles.headerSubtitle}>Intake form</div>
           </div>
         </div>
 
@@ -643,16 +668,17 @@ const styles = {
     display: "flex",
     justifyContent: "center",
     alignItems: "flex-start",
-    padding: "24px",
-    fontFamily: "'Segoe UI', Arial, sans-serif",
+    padding: "40px 20px",
+    fontFamily: "'IBM Plex Sans', sans-serif",
     boxSizing: "border-box",
   },
   card: {
     width: "100%",
-    maxWidth: "560px",
-    background: "#ffffff",
-    borderRadius: "16px",
-    boxShadow: "0 4px 24px rgba(0,0,0,0.12)",
+    maxWidth: "520px",
+    background: "#FFFFFF",
+    border: "1px solid var(--line)",
+    borderRadius: "14px",
+    boxShadow: "0 1px 2px rgba(0,0,0,0.04), 0 16px 40px rgba(0,0,0,0.12)",
     overflow: "hidden",
     display: "flex",
     flexDirection: "column",
@@ -660,28 +686,40 @@ const styles = {
   header: {
     display: "flex",
     alignItems: "center",
-    gap: "12px",
-    padding: "16px 20px",
-    background: "#1A1A1A",
-    color: "#fff",
+    gap: "14px",
+    padding: "18px 24px",
+    background: "var(--ink)",
   },
   headerBadge: {
-    background: "#C8102E",
+    background: "var(--red)",
     color: "#fff",
+    fontFamily: "'IBM Plex Mono', monospace",
     fontWeight: 700,
     fontSize: "12px",
-    padding: "6px 10px",
-    borderRadius: "8px",
-    letterSpacing: "0.5px",
+    letterSpacing: "0.06em",
+    padding: "7px 11px",
+    borderRadius: "6px",
+    flexShrink: 0,
   },
-  headerTitle: { fontWeight: 600, fontSize: "15px" },
-  headerSubtitle: { fontSize: "12px", color: "#B3B3B3" },
+  headerTitle: {
+    fontFamily: "'Source Serif 4', serif",
+    fontWeight: 600,
+    fontSize: "18px",
+    lineHeight: 1.2,
+    color: "#fff",
+  },
+  headerSubtitle: {
+    marginTop: "3px",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "11.5px",
+    color: "var(--stone-light)",
+  },
   body: {
-    padding: "20px",
+    padding: "22px 28px 26px",
     display: "flex",
     flexDirection: "column",
-    gap: "18px",
-    background: "#FAFAFA",
+    gap: "20px",
+    background: "#FFFFFF",
   },
   progressRow: {
     display: "flex",
@@ -689,43 +727,54 @@ const styles = {
     alignItems: "center",
   },
   stepBadge: {
-    fontSize: "12px",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "11px",
     fontWeight: 700,
-    color: "#C8102E",
+    color: "var(--red)",
     textTransform: "uppercase",
-    letterSpacing: "0.5px",
+    letterSpacing: "0.08em",
   },
   stepCount: {
-    fontSize: "12px",
-    color: "#888",
-    fontWeight: 600,
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "11px",
+    color: "var(--stone)",
+    letterSpacing: "0.02em",
   },
-  progressBarOuter: {
-    width: "100%",
-    height: "6px",
-    borderRadius: "999px",
-    background: "#EDEDED",
-    overflow: "hidden",
+  dotsWrap: {
+    display: "flex",
+    alignItems: "center",
   },
-  progressBarInner: {
-    height: "100%",
-    background: "#C8102E",
-    borderRadius: "999px",
-    transition: "width 0.2s ease",
+  dotUnit: { display: "flex", alignItems: "center", flex: 1 },
+  dot: {
+    width: "9px",
+    height: "9px",
+    borderRadius: "50%",
+    border: "1.5px solid var(--line)",
+    flexShrink: 0,
+    transition: "background 0.25s ease, border-color 0.25s ease",
+  },
+  dotLine: {
+    flex: 1,
+    height: "1.5px",
+    marginLeft: "2px",
+    marginRight: "2px",
+    background: "var(--line)",
+    transition: "background 0.25s ease",
   },
   section: {
     display: "flex",
     flexDirection: "column",
-    gap: "16px",
+    gap: "18px",
   },
   sectionTitle: {
-    fontSize: "13px",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "11px",
     fontWeight: 700,
-    color: "#C8102E",
+    color: "var(--red)",
     textTransform: "uppercase",
-    letterSpacing: "0.5px",
-    borderBottom: "1px solid #EDEDED",
-    paddingBottom: "6px",
+    letterSpacing: "0.08em",
+    borderBottom: "1px solid var(--line)",
+    paddingBottom: "8px",
   },
   field: {
     display: "flex",
@@ -733,128 +782,142 @@ const styles = {
     gap: "6px",
   },
   label: {
-    fontSize: "14px",
+    fontSize: "14.5px",
     fontWeight: 600,
-    color: "#1A1A1A",
+    color: "var(--ink)",
   },
-  required: { color: "#C8102E" },
+  required: { color: "var(--red)" },
   input: {
-    padding: "10px 12px",
-    borderRadius: "10px",
-    border: "1.5px solid #DDD",
-    fontSize: "14px",
+    border: "none",
+    borderBottom: "1.5px solid var(--stone-light)",
+    background: "transparent",
+    fontSize: "15px",
+    padding: "6px 2px",
     outline: "none",
     boxSizing: "border-box",
-    fontFamily: "inherit",
-    background: "#fff",
+    fontFamily: "'IBM Plex Sans', sans-serif",
+    color: "var(--ink)",
   },
   textarea: {
+    border: "1px solid var(--line)",
+    borderRadius: "8px",
+    background: "#fff",
+    fontSize: "14.5px",
     padding: "10px 12px",
-    borderRadius: "10px",
-    border: "1.5px solid #DDD",
-    fontSize: "14px",
     outline: "none",
     boxSizing: "border-box",
-    fontFamily: "inherit",
+    fontFamily: "'IBM Plex Sans', sans-serif",
+    color: "var(--ink)",
     minHeight: "70px",
     resize: "vertical",
-    background: "#fff",
   },
   pillWrap: {
+    borderTop: "1px solid var(--line)",
     display: "flex",
-    flexWrap: "wrap",
-    gap: "8px",
+    flexDirection: "column",
   },
   pillButton: {
-    padding: "8px 14px",
-    borderRadius: "999px",
-    border: "1.5px solid #C8102E",
-    background: "#fff",
-    color: "#C8102E",
-    fontSize: "13px",
-    fontWeight: 600,
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    padding: "12px 4px",
+    background: "transparent",
+    border: "none",
+    borderLeft: "3px solid transparent",
+    borderBottom: "1px solid var(--line)",
+    fontSize: "14.5px",
+    color: "var(--ink)",
     cursor: "pointer",
+    textAlign: "left",
+    transition: "border-left-color 0.15s ease, background 0.15s ease",
+    fontFamily: "inherit",
   },
-  pillButtonActive: {
-    background: "#C8102E",
-    color: "#fff",
+  pillMark: {
+    color: "var(--red)",
+    fontSize: "14px",
   },
   multiHint: {
-    fontSize: "12px",
-    color: "#C8102E",
-    fontWeight: 600,
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "11px",
+    color: "var(--red)",
+    letterSpacing: "0.02em",
   },
   hint: {
-    fontSize: "12px",
-    color: "#888",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "11px",
+    color: "var(--stone)",
   },
   error: {
-    fontSize: "12px",
-    color: "#C8102E",
-    fontWeight: 600,
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "11px",
+    color: "var(--red)",
+    fontWeight: 700,
   },
   submitError: {
-    background: "#FDECEC",
-    border: "1px solid #C8102E",
-    color: "#C8102E",
-    borderRadius: "10px",
+    background: "var(--paper-alt)",
+    border: "1px solid var(--red)",
+    color: "var(--red)",
+    borderRadius: "8px",
     padding: "10px 14px",
     fontSize: "13px",
     fontWeight: 600,
   },
-  incidentBox: {
+  procurementBox: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
     gap: "12px",
-    background: "#fff",
-    border: "1.5px solid #DDD",
-    borderRadius: "10px",
+    background: "var(--paper-alt)",
+    border: "1px solid var(--line)",
+    borderRadius: "8px",
     padding: "12px 14px",
   },
-  incidentId: {
-    fontFamily: "'Consolas', 'Courier New', monospace",
+  procurementId: {
+    fontFamily: "'IBM Plex Mono', monospace",
     fontSize: "14px",
     fontWeight: 700,
-    color: "#1A1A1A",
+    color: "var(--ink)",
     wordBreak: "break-all",
   },
   copyButton: {
     flexShrink: 0,
-    padding: "8px 14px",
-    borderRadius: "8px",
-    border: "1.5px solid #1A1A1A",
+    padding: "9px 16px",
+    border: "1px solid var(--ink)",
     background: "#fff",
-    color: "#1A1A1A",
+    color: "var(--ink)",
     fontWeight: 700,
-    fontSize: "13px",
+    fontSize: "12.5px",
+    letterSpacing: "0.04em",
     cursor: "pointer",
+    fontFamily: "'IBM Plex Mono', monospace",
   },
   navRow: {
     display: "flex",
     justifyContent: "space-between",
     gap: "12px",
+    paddingTop: "4px",
   },
   backButton: {
-    padding: "12px 18px",
-    borderRadius: "10px",
-    border: "1.5px solid #DDD",
-    background: "#fff",
-    color: "#1A1A1A",
-    fontWeight: 700,
-    fontSize: "14px",
+    padding: "9px 16px",
+    border: "1px solid var(--line)",
+    background: "transparent",
+    color: "var(--ink)",
+    fontSize: "12.5px",
+    letterSpacing: "0.04em",
     cursor: "pointer",
+    fontFamily: "'IBM Plex Mono', monospace",
   },
   nextButton: {
     flex: 1,
-    padding: "14px 16px",
-    borderRadius: "10px",
-    border: "none",
-    background: "#1A1A1A",
+    padding: "12px 16px",
+    border: "1px solid var(--ink)",
+    background: "var(--ink)",
     color: "#fff",
     fontWeight: 700,
-    fontSize: "15px",
+    fontSize: "13.5px",
+    letterSpacing: "0.04em",
     cursor: "pointer",
+    fontFamily: "'IBM Plex Mono', monospace",
   },
   navButtonDisabled: {
     opacity: 0.4,
@@ -862,27 +925,39 @@ const styles = {
   },
   submitButton: {
     flex: 1,
-    padding: "14px 16px",
-    borderRadius: "10px",
-    border: "none",
-    background: "#1A1A1A",
+    padding: "12px 16px",
+    border: "1px solid var(--ink)",
+    background: "var(--ink)",
     color: "#fff",
     fontWeight: 700,
-    fontSize: "15px",
+    fontSize: "13.5px",
+    letterSpacing: "0.04em",
     cursor: "pointer",
+    fontFamily: "'IBM Plex Mono', monospace",
   },
   submitButtonDisabled: {
-    background: "#888",
+    background: "var(--stone)",
+    borderColor: "var(--stone)",
     cursor: "not-allowed",
   },
-  catalogHeading: {
-    fontSize: "18px",
+  catalogEyebrow: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "11px",
     fontWeight: 700,
-    color: "#1A1A1A",
+    color: "var(--red)",
+    textTransform: "uppercase",
+    letterSpacing: "0.08em",
+  },
+  catalogHeading: {
+    fontFamily: "'Source Serif 4', serif",
+    fontSize: "19px",
+    fontWeight: 600,
+    color: "var(--ink)",
+    marginTop: "-8px",
   },
   catalogSubheading: {
-    fontSize: "13px",
-    color: "#555",
+    fontSize: "13.5px",
+    color: "var(--stone)",
     lineHeight: 1.5,
   },
   catalogList: {
@@ -891,41 +966,52 @@ const styles = {
     gap: "12px",
   },
   catalogCard: {
-    border: "1.5px solid #EDEDED",
-    borderRadius: "12px",
+    borderTop: "1px solid var(--line)",
+    borderRight: "1px solid var(--line)",
+    borderBottom: "1px solid var(--line)",
+    borderLeft: "3px solid var(--red)",
+    borderRadius: "0 8px 8px 0",
     padding: "14px 16px",
     background: "#fff",
     display: "flex",
     flexDirection: "column",
-    gap: "4px",
+    gap: "5px",
   },
   catalogCardTitle: {
     fontSize: "14px",
     fontWeight: 700,
-    color: "#1A1A1A",
+    color: "var(--ink)",
   },
   catalogCardMeta: {
-    fontSize: "12px",
-    color: "#888",
-    fontWeight: 600,
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "11px",
+    color: "var(--stone)",
   },
   catalogCardDesc: {
     fontSize: "13px",
-    color: "#333",
+    color: "var(--ink)",
     lineHeight: 1.4,
   },
   catalogCardLink: {
-    fontSize: "12px",
-    color: "#C8102E",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "11.5px",
+    color: "var(--red)",
     fontWeight: 700,
     textDecoration: "none",
     marginTop: "4px",
   },
+  catalogActions: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
+    paddingTop: "4px",
+  },
   continueLink: {
     background: "none",
     border: "none",
-    color: "#666",
-    fontSize: "13px",
+    color: "var(--stone)",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "12px",
     textDecoration: "underline",
     cursor: "pointer",
     padding: "4px",
@@ -941,7 +1027,7 @@ const styles = {
     justifyContent: "space-between",
     alignItems: "flex-start",
     gap: "12px",
-    borderBottom: "1px solid #EDEDED",
+    borderBottom: "1px solid var(--line)",
     paddingBottom: "10px",
   },
   reviewText: {
@@ -950,22 +1036,24 @@ const styles = {
     gap: "2px",
   },
   reviewLabel: {
-    fontSize: "12px",
-    fontWeight: 600,
-    color: "#888",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "10.5px",
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+    color: "var(--stone)",
   },
   reviewValue: {
     fontSize: "14px",
     fontWeight: 600,
-    color: "#1A1A1A",
+    color: "var(--ink)",
   },
   editLink: {
     background: "none",
-    border: "1.5px solid #DDD",
-    borderRadius: "8px",
+    border: "1px solid var(--line)",
     padding: "4px 10px",
-    color: "#1A1A1A",
-    fontSize: "12px",
+    color: "var(--ink)",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "11px",
     fontWeight: 700,
     cursor: "pointer",
     whiteSpace: "nowrap",
