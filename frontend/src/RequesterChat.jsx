@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
-import { converseTurn, PARSEABLE } from "./chatbotParse.js";
+import { converseTurn, assistText, PARSEABLE, ASSISTED_TEXT } from "./chatbotParse.js";
 
 // -----------------------------------------------------------------
 // MASTER QUESTION LIST (Part B)
@@ -415,9 +415,35 @@ function RequesterChat({ requestId }) {
     await runTurn(history);
   }
 
-  function submitText() {
+  async function submitText() {
     const trimmed = textInput.trim();
-    if (!trimmed) return;
+    if (!trimmed || parsing) return;
+    // Open-text questions that get a confusion check before we accept the answer.
+    if (ASSISTED_TEXT.has(currentStep.id)) {
+      setLog((l) => [...l, { from: "user", text: trimmed }]);
+      setTextInput("");
+      setParsing(true);
+      try {
+        const ctx = {
+          software_name: answers.software_name,
+          vendor_website: answers.vendor_website,
+        };
+        const r = await assistText(currentStep.id, currentStep.bot, trimmed, ctx);
+        if (r.is_answer) {
+          commitAnswer(trimmed);
+        } else {
+          setLog((l) => [
+            ...l,
+            { from: "bot", label: "AI", text: r.message || "Could you tell me a bit more?" },
+          ]);
+        }
+      } catch (e) {
+        commitAnswer(trimmed); // fail open: never wedge the form
+      } finally {
+        setParsing(false);
+      }
+      return;
+    }
     advance(trimmed, trimmed);
     setTextInput("");
   }
@@ -601,11 +627,12 @@ function RequesterChat({ requestId }) {
                 value={textInput}
                 onChange={(e) => setTextInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && submitText()}
-                placeholder={currentStep.placeholder}
+                placeholder={parsing ? "Thinking…" : currentStep.placeholder}
+                disabled={parsing}
                 autoFocus
               />
-              <button style={styles.textSubmit} onClick={submitText}>
-                Enter
+              <button style={styles.textSubmit} onClick={submitText} disabled={parsing}>
+                {parsing ? "…" : "Enter"}
               </button>
             </div>
           )

@@ -110,6 +110,38 @@ for _q in ["la_health", "la_pii", "la_payment", "la_lawenforcement",
     OPTION_GUIDE[_q] = [("yes", "Yes, it does."), ("no", "No, it doesn't.")]
 
 
+# Open-text (non-enum) questions: how to help a confused requester and what
+# counts as a valid "I have nothing to add" answer. Used by assist_open_text().
+HELP_HINTS = {
+    "vendor_privacy_policy_url": {
+        "help": "A vendor's privacy policy is almost always linked at the very "
+                "bottom (the footer) of their website, usually labeled 'Privacy' "
+                "or 'Privacy Policy'. Open the vendor's site, scroll to the "
+                "bottom, and copy that link. If you truly can't find one, that's "
+                "okay.",
+        "opt_out": '"not sure"',
+    },
+    "integration_explanation": {
+        "help": "Name the campus system(s) it would connect to — like Canvas, "
+                "Oracle, or PeopleSoft/mySDSU — and what information would be "
+                "shared (for example, a class roster or grades).",
+        "opt_out": None,
+    },
+    "other_data_category": {
+        "help": "This is asking whether the software touches any other sensitive "
+                "information we haven't already covered. If nothing else comes to "
+                "mind, that's fine.",
+        "opt_out": '"no"',
+    },
+    "compliance_requirements": {
+        "help": "This is about any legal or contractual strings attached — a "
+                "research grant's rules, an international privacy law, or a "
+                "contract requirement. If you don't know of any, that's fine.",
+        "opt_out": '"no"',
+    },
+}
+
+
 def _load_prompt_section(section: str) -> str:
     """Pull the system preamble + the relevant per-question block from the md."""
     text = _PROMPT_FILE.read_text(encoding="utf-8")
@@ -477,6 +509,101 @@ def _converse_mock(question_id, question_text, history):
           "Got it — can you tell me a bit more so I can point you to the right option?"
     return {"status": "clarify", "answer": None, "confidence": r["confidence"],
             "message": msg, "show_options": show}
+
+
+# ---- Open-text assist (for non-enum questions) -----------------------------
+# Stops a confused reply ("where would I find that?") from being silently saved
+# as the answer. Decides: is this a real answer, or are they asking for help?
+_ASSIST_SYSTEM = """You help a non-technical San Diego State University faculty/staff member fill
+out one open-text field on a software request form. Given the question and their
+reply, decide ONE thing: did they actually ANSWER it, or are they confused /
+asking YOU a question / asking where to find something?
+
+- A real answer includes a substantive response, a pasted link/URL, or a valid
+  opt-out like "no", "none", "not sure", "n/a".
+- If instead they ask a question back ("where do I find that?", "what do you
+  mean?", "how?") or express confusion, that is NOT an answer. Write a short,
+  warm, plain-English reply that actually helps them find or understand what's
+  being asked, and tell them what to type. Never treat a question-back as the
+  answer, and never end the conversation on it."""
+
+
+def _assist_tool():
+    return {
+        "name": "record_assist",
+        "description": "Decide whether the reply is a real answer or a request for help.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "is_answer": {"type": "boolean"},
+                "message": {
+                    "type": "string",
+                    "description": "If is_answer is false, a short helpful reply guiding them to an answer.",
+                },
+            },
+            "required": ["is_answer", "message"],
+        },
+    }
+
+
+def assist_open_text(question_id, question_text, reply, intake_context=None):
+    """One assist turn for an open-text question. Returns {is_answer, message}."""
+    reply = (reply or "").strip()
+    # Pasted URL or explicit short opt-out -> definitely an answer, skip the model.
+    low = reply.lower()
+    if re.match(r"https?://", low) or low in {"no", "none", "n/a", "na", "not sure", "unsure", "nope"}:
+        return {"is_answer": True, "message": ""}
+
+    if (MODE or "").lower() == "mock":
+        # Offline: treat a reply ending in '?' or containing confusion words as a question.
+        looks_confused = reply.endswith("?") or any(
+            w in low for w in ["where", "what do you mean", "how do i", "not sure what", "don't understand", "dont understand"]
+        )
+        if looks_confused:
+            hint = HELP_HINTS.get(question_id, {})
+            msg = hint.get("help", "Here's what this is asking — take your best guess, or say what you know.")
+            if hint.get("opt_out"):
+                msg += f" If it doesn't apply, you can just type {hint['opt_out']}."
+            return {"is_answer": False, "message": msg}
+        return {"is_answer": True, "message": ""}
+
+    import boto3
+
+    hint = HELP_HINTS.get(question_id, {})
+    guide = ""
+    if hint.get("help"):
+        guide = f"\nIf they need help, use this to guide them:\n{hint['help']}"
+        if hint.get("opt_out"):
+            guide += f"\nRemind them they may type {hint['opt_out']} if it doesn't apply."
+    ctx = ""
+    if intake_context:
+        ctx = "\nContext from the form: " + ", ".join(
+            f"{k}={v}" for k, v in intake_context.items() if v
+        )
+    user = (
+        f'The question: "{question_text}"{ctx}{guide}\n\n'
+        f'The requester replied:\n"""{reply}"""\n\nCall record_assist.'
+    )
+    client = boto3.client("bedrock-runtime", region_name=REGION)
+    body = {
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": 400,
+        "system": _ASSIST_SYSTEM,
+        "messages": [{"role": "user", "content": user}],
+        "tools": [_assist_tool()],
+        "tool_choice": {"type": "tool", "name": "record_assist"},
+    }
+    resp = client.invoke_model(modelId=MODEL_ID, body=json.dumps(body))
+    payload = json.loads(resp["body"].read())
+    for blk in payload.get("content", []):
+        if blk.get("type") == "tool_use" and blk.get("name") == "record_assist":
+            raw = blk["input"]
+            is_ans = bool(raw.get("is_answer", True))
+            return {
+                "is_answer": is_ans,
+                "message": "" if is_ans else str(raw.get("message", ""))[:600],
+            }
+    return {"is_answer": True, "message": ""}  # fail open: accept the answer
 
 
 def next_cascade_action(result):
