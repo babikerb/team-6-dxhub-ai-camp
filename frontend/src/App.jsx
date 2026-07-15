@@ -1,33 +1,28 @@
-import { useEffect, useState } from "react";
+import { BrowserRouter, Routes, Route, useNavigate, useParams } from "react-router-dom";
 import IntakeForm from "./components/IntakeForm/IntakeForm.jsx";
 import RequesterChat from "./RequesterChat.jsx";
+import AdminDashboard from "./components/AdminDashboard/AdminDashboard.jsx";
 
-function parseRoute(pathname) {
-  const chatMatch = pathname.match(/^\/chatbot\/([^/]+)\/?$/);
-  if (chatMatch) return { name: "chatbot", requestId: decodeURIComponent(chatMatch[1]) };
-  return { name: "intake" };
+function IntakeFormPage() {
+  const navigate = useNavigate();
+  return <IntakeForm onSubmitted={(requestId) => navigate(`/chatbot/${encodeURIComponent(requestId)}`)} />;
+}
+
+function ChatbotPage() {
+  const { requestId } = useParams();
+  return <RequesterChat requestId={decodeURIComponent(requestId)} />;
 }
 
 function App() {
-  const [route, setRoute] = useState(() => parseRoute(window.location.pathname));
-
-  useEffect(() => {
-    function onPopState() {
-      setRoute(parseRoute(window.location.pathname));
-    }
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
-  }, []);
-
-  function navigateToChatbot(requestId) {
-    window.history.pushState({}, "", `/chatbot/${encodeURIComponent(requestId)}`);
-    setRoute({ name: "chatbot", requestId });
-  }
-
-  if (route.name === "chatbot") {
-    return <RequesterChat requestId={route.requestId} />;
-  }
-  return <IntakeForm onSubmitted={navigateToChatbot} />;
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<IntakeFormPage />} />
+        <Route path="/chatbot/:requestId" element={<ChatbotPage />} />
+        <Route path="/admin" element={<AdminDashboard />} />
+      </Routes>
+    </BrowserRouter>
+  );
 }
 
 export default App;
