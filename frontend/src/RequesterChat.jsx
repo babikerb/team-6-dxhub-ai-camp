@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
+import { parseReply, PARSEABLE } from "./chatbotParse.js";
 
 // -----------------------------------------------------------------
 // MASTER QUESTION LIST (Part B)
@@ -284,6 +285,10 @@ function RequesterChat({ requestId }) {
   const [textInput, setTextInput] = useState("");
   const [multiSelected, setMultiSelected] = useState([]);
   const [done, setDone] = useState(false);
+  // Conversational (Bedrock) state for parseable choice questions:
+  const [parsing, setParsing] = useState(false);       // waiting on the model
+  const [pending, setPending] = useState(null);        // {value,label} awaiting confirm
+  const [revealButtons, setRevealButtons] = useState(false); // fell back to options
   const scrollRef = useRef(null);
 
   useEffect(() => {
@@ -305,6 +310,10 @@ function RequesterChat({ requestId }) {
   }
 
   function goToStep(index, updatedAnswers) {
+    // reset per-question conversational state
+    setPending(null);
+    setRevealButtons(false);
+    setParsing(false);
     if (index < STEPS.length) {
       setLog((l) => [...l, { from: "bot", label: STEPS[index].label, text: STEPS[index].bot }]);
       setStepIndex(index);
@@ -325,11 +334,83 @@ function RequesterChat({ requestId }) {
     }
   }
 
-  function advance(value, displayText) {
-    const updated = { ...answers, [currentStep.id]: value };
-    setLog((l) => [...l, { from: "user", text: displayText }]);
+  // Commit an answer WITHOUT logging a user bubble (caller already logged it).
+  function commitAnswer(value, updatedAnswers) {
+    const updated = updatedAnswers || { ...answers, [currentStep.id]: value };
     setAnswers(updated);
     setTimeout(() => goToStep(findNextIndex(stepIndex, updated), updated), 260);
+  }
+
+  function advance(value, displayText) {
+    setLog((l) => [...l, { from: "user", text: displayText }]);
+    commitAnswer(value);
+  }
+
+  // --- Conversational path (Bedrock parsing + clarification cascade) --------
+  // Used for choice questions the parser understands. The requester types a
+  // plain-English answer; we parse it to a fixed option with a confidence, then
+  // either confirm, or fall back to the option buttons.
+  const isConversational =
+    currentStep.type === "choice" && PARSEABLE.has(currentStep.id);
+
+  async function submitFreeText() {
+    const text = textInput.trim();
+    if (!text || parsing) return;
+    setLog((l) => [...l, { from: "user", text }]);
+    setTextInput("");
+    setParsing(true);
+    try {
+      const ctx = {
+        software_name: answers.software_name,
+        use_description: answers.use_description,
+      };
+      const r = await parseReply(currentStep.id, text, ctx);
+      const opt = currentStep.options.find((o) => o.value === r.answer);
+      const why = (r.reasoning || "").trim();
+      if (r.cascade_action === "confirm" && opt) {
+        setLog((l) => [
+          ...l,
+          { from: "bot", label: "AI", text: `${why}\n\nSounds like: “${opt.label}.” Is that right?` },
+        ]);
+        setPending({ value: r.answer, label: opt.label });
+      } else {
+        const lead =
+          r.answer === "unsure" || !opt
+            ? "I couldn't tell for sure from that."
+            : why;
+        setLog((l) => [
+          ...l,
+          { from: "bot", label: "AI", text: `${lead}\n\nCould you pick the closest option below?` },
+        ]);
+        setRevealButtons(true);
+      }
+    } catch (e) {
+      setLog((l) => [
+        ...l,
+        { from: "bot", label: "AI", text: "I couldn't reach the AI service — please choose an option below." },
+      ]);
+      setRevealButtons(true);
+    } finally {
+      setParsing(false);
+    }
+  }
+
+  function confirmYes() {
+    if (!pending) return;
+    setLog((l) => [...l, { from: "user", text: "Yes, that's right" }]);
+    const value = pending.value;
+    setPending(null);
+    commitAnswer(value);
+  }
+
+  function confirmNo() {
+    setPending(null);
+    setRevealButtons(true);
+    setLog((l) => [
+      ...l,
+      { from: "user", text: "Not quite" },
+      { from: "bot", label: "AI", text: "No problem — which of these fits best?" },
+    ]);
   }
 
   function submitText() {
@@ -422,7 +503,48 @@ function RequesterChat({ requestId }) {
 
         {/* Input */}
         {!done ? (
-          currentStep.type === "choice" ? (
+          pending ? (
+            <div style={styles.choiceList}>
+              <button style={styles.choiceRow} onClick={confirmYes}>
+                <span>Yes, that's right</span>
+                <span style={styles.choiceMark}>&rarr;</span>
+              </button>
+              <button style={styles.choiceRow} onClick={confirmNo}>
+                <span>No, let me choose</span>
+                <span style={styles.choiceMark}>&rarr;</span>
+              </button>
+            </div>
+          ) : isConversational ? (
+            <div style={styles.multiWrap}>
+              <div style={styles.textRow}>
+                <input
+                  style={styles.textField}
+                  value={textInput}
+                  onChange={(e) => setTextInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && submitFreeText()}
+                  placeholder={parsing ? "Reading your answer…" : "Answer in your own words…"}
+                  disabled={parsing}
+                  autoFocus
+                />
+                <button style={styles.textSubmit} onClick={submitFreeText} disabled={parsing}>
+                  {parsing ? "…" : "Send"}
+                </button>
+              </div>
+              <div style={styles.orChoose}>or choose an option</div>
+              <div style={styles.choiceList}>
+                {currentStep.options.map((opt) => (
+                  <button
+                    key={opt.value}
+                    style={styles.choiceRow}
+                    onClick={() => advance(opt.value, opt.label)}
+                  >
+                    <span>{opt.label}</span>
+                    <span style={styles.choiceMark}>&rarr;</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : currentStep.type === "choice" ? (
             <div style={styles.choiceList}>
               {currentStep.options.map((opt) => (
                 <button
@@ -598,6 +720,16 @@ const styles = {
     fontSize: "15px",
     lineHeight: 1.5,
     color: "var(--ink)",
+    whiteSpace: "pre-wrap",
+  },
+  orChoose: {
+    padding: "14px 28px 6px",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "10.5px",
+    letterSpacing: "0.06em",
+    textTransform: "uppercase",
+    color: "var(--stone)",
+    borderTop: "1px solid var(--line)",
   },
   userEntryWrap: {
     display: "flex",
