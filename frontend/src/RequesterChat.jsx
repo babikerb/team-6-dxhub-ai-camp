@@ -130,7 +130,7 @@ function ResultRow({ label, value }) {
   );
 }
 
-function RequesterChat() {
+function RequesterChat({ requestId }) {
   const [answers, setAnswers] = useState({});
   const [messages, setMessages] = useState([
     { from: "bot", text: resolveBotText(STEPS[0], {}) },
@@ -199,7 +199,9 @@ function RequesterChat() {
           <div style={styles.headerBadge}>SDSU</div>
           <div>
             <div style={styles.headerTitle}>Software Request Assistant</div>
-            <div style={styles.headerSubtitle}>IT Review intake</div>
+            <div style={styles.headerSubtitle}>
+              {requestId ? `Request #${requestId.slice(0, 8)}` : "IT Review intake"}
+            </div>
           </div>
         </div>
 
