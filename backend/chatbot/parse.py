@@ -393,7 +393,12 @@ Hard rules:
       lay the options out plainly (show_options true).
 - NEVER shut the conversation down. Do not give up, and do not return "unsure"
   as a way to end it. Always either resolve or ask a constructive next question.
-  There is always a next step you can take with them."""
+  There is always a next step you can take with them.
+
+Formatting: write PLAIN TEXT only. Your message is shown in a chat bubble that
+does NOT render markdown, so never use **, __, #, backticks, or markdown tables —
+they'd show as literal characters. For a short list, use a dash and a line break
+(- like this) or plain numbers (1. like this), nothing else."""
 
 
 def _converse_tool(enum):
@@ -532,7 +537,7 @@ def _normalize_turn(raw, q, user_attempts=0):
         "status": status,
         "answer": answer if answer in q["enum"] else None,
         "confidence": max(0.0, min(1.0, conf)),
-        "message": str(raw.get("message", "")).strip()[:2000]
+        "message": _strip_markdown(str(raw.get("message", "")).strip())[:2000]
         or "Could you tell me a little more?",
         "show_options": show_options,
     }
@@ -574,7 +579,10 @@ question, or are they asking you to FIND a document for them?
 - If they ask you to FIND, LOOK UP, SEARCH FOR, or RETRIEVE the document (and a
   web_search is available for this question), search for it and give them the
   actual document URL in your message. Only offer a URL you actually see in the
-  search results — never invent one. Prefer the vendor's own official page."""
+  search results — never invent one. Prefer the vendor's own official page.
+
+Formatting: write PLAIN TEXT only — no markdown (**, __, #, backticks); the chat
+does not render it. A bare URL on its own line is fine."""
 
 # Open-text chatbot questions where the bot may search the web to fetch the
 # document, mapped to the kind of document to look for.
@@ -660,6 +668,19 @@ def _web_search(query, max_results=5):
                 "snippet": (r.get("body") or "")[:200],
             })
     return out
+
+
+def _strip_markdown(text):
+    """The chat UI renders plain text, so remove markdown that would otherwise
+    show as literal characters (**bold**, __bold__, # headings, `code`). Leaves
+    dashes and numbered lists alone — those read fine as plain text."""
+    if not text:
+        return text
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)        # **bold** -> bold
+    text = re.sub(r"__(.+?)__", r"\1", text)            # __bold__ -> bold
+    text = re.sub(r"(?m)^\s{0,3}#{1,6}\s+", "", text)   # # / ## headings
+    text = text.replace("`", "")                         # `code`
+    return text
 
 
 def _registrable_domain(url):
@@ -817,7 +838,7 @@ def assist_open_text(question_id, question_text, reply, intake_context=None):
     suggested = None if is_ans else raw.get("suggested_value")
     return {
         "is_answer": is_ans,
-        "message": "" if is_ans else str(raw.get("message", ""))[:2000],
+        "message": "" if is_ans else _strip_markdown(str(raw.get("message", "")))[:2000],
         "suggested_value": suggested or None,
     }
 
@@ -1015,7 +1036,7 @@ def _normalize_match(raw, catalog):
     if matched not in names:
         matched = None
     alts = [
-        {"name": a.get("name"), "why": str(a.get("why", ""))[:200]}
+        {"name": a.get("name"), "why": _strip_markdown(str(a.get("why", "")))[:200]}
         for a in (raw.get("alternatives") or [])
         if isinstance(a, dict) and a.get("name") in names
     ]
