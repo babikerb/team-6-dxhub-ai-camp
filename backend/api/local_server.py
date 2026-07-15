@@ -22,6 +22,7 @@ from handlers import (
     admin_patch,
     chatbot_assist,
     chatbot_converse,
+    chatbot_find_document,
     chatbot_match,
     chatbot_parse,
     chatbot_patch,
@@ -112,6 +113,12 @@ async def chatbot_assist_route(request: Request):
 async def chatbot_match_route(request: Request):
     event = await _to_event(request)
     return _from_lambda_response(chatbot_match.handler(event))
+
+
+@app.post("/chatbot/find-document")
+async def chatbot_find_document_route(request: Request):
+    event = await _to_event(request)
+    return _from_lambda_response(chatbot_find_document.handler(event))
 
 
 @app.get("/health")

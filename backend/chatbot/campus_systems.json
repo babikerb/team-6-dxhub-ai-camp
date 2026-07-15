@@ -1,0 +1,83 @@
+{
+  "_comment": "SDSU campus systems the chatbot recognizes when a requester mentions integration. Seeded from the historical ServiceNow export (real system names people typed) plus known SDSU systems. DRAFT — SDSU IT should validate/complete this list. `aliases` are lowercased ways people refer to the system; `what_it_is` is shown to a confused requester.",
+  "systems": [
+    {
+      "name": "PeopleSoft Campus Solutions (my.SDSU)",
+      "aliases": ["mysdsu", "my.sdsu", "my sdsu", "peoplesoft", "peoplesoft campus solutions", "campus solutions", "sis", "student information system", "financial aid system", "registration", "student records", "admissions system"],
+      "what_it_is": "SDSU's student information system — registration, student records, admissions, and financial aid.",
+      "category": "Student Information"
+    },
+    {
+      "name": "Canvas",
+      "aliases": ["canvas", "lms", "learning management system", "course site"],
+      "what_it_is": "The learning management system for courses, assignments, and grades.",
+      "category": "Learning Management"
+    },
+    {
+      "name": "Google Workspace",
+      "aliases": ["google workspace", "google", "gmail", "google docs", "google drive", "google calendar", "g suite", "sdsu email"],
+      "what_it_is": "Campus email, Docs, Drive, and Calendar.",
+      "category": "Productivity & Email"
+    },
+    {
+      "name": "SDSUid / Single Sign-On",
+      "aliases": ["sdsuid", "sdsu id", "sso", "single sign-on", "campus login", "azure ad", "azure", "microsoft entra", "entra", "okta"],
+      "what_it_is": "The campus single sign-on / identity system used to log into other systems.",
+      "category": "Identity & Access"
+    },
+    {
+      "name": "RedID",
+      "aliases": ["redid", "red id", "red-id"],
+      "what_it_is": "The campus ID number used to identify students and employees.",
+      "category": "Identity & Access"
+    },
+    {
+      "name": "Oracle EBS / PeopleSoft HCM",
+      "aliases": ["oracle", "oracle ebs", "ebs", "peoplesoft hcm", "hcm", "hr system", "payroll", "procurement", "finance system"],
+      "what_it_is": "HR, payroll, procurement, and finance (employee information).",
+      "category": "HR & Finance"
+    },
+    {
+      "name": "OnBase",
+      "aliases": ["onbase", "hyland", "document management"],
+      "what_it_is": "Document and records management system.",
+      "category": "Records Management"
+    },
+    {
+      "name": "Transact / CashNET",
+      "aliases": ["transact", "cashnet", "bursar", "student accounts", "tuition payment", "payment system"],
+      "what_it_is": "Student payments and the Bursar's office / student accounts.",
+      "category": "Payments"
+    },
+    {
+      "name": "StarRez",
+      "aliases": ["starrez", "housing", "residential", "dorms"],
+      "what_it_is": "Housing and residential life management.",
+      "category": "Housing"
+    },
+    {
+      "name": "Slate",
+      "aliases": ["slate", "technolutions", "admissions crm"],
+      "what_it_is": "Admissions and enrollment CRM.",
+      "category": "Admissions"
+    },
+    {
+      "name": "Qualtrics",
+      "aliases": ["qualtrics", "survey system"],
+      "what_it_is": "Survey and data-collection platform.",
+      "category": "Surveys"
+    },
+    {
+      "name": "Data Lake / Data Warehouse",
+      "aliases": ["data lake", "data warehouse", "institutional data", "reporting database"],
+      "what_it_is": "Central institutional data store used for reporting and analytics.",
+      "category": "Data & Analytics"
+    },
+    {
+      "name": "Zoom",
+      "aliases": ["zoom"],
+      "what_it_is": "Video conferencing.",
+      "category": "Communication"
+    }
+  ]
+}

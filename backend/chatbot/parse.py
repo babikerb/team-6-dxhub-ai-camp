@@ -57,6 +57,10 @@ QUESTIONS = {
         "enum": ["yes", "no", "unsure"],
         "prompt_section": "shares_data_with_campus_system",
     },
+    "scope_of_usage": {
+        "enum": ["Individual", "Classroom", "Department", "University", "unsure"],
+        "prompt_section": "scope_of_usage",
+    },
     "estimated_users": {
         "enum": ["1-30", "30-100", "100+", "unsure"],
         "prompt_section": "estimated_users",
@@ -105,6 +109,12 @@ OPTION_GUIDE = {
     "sso_capable": [
         ("yes", "You log in with your regular SDSUid — the same login as other campus systems."),
         ("no", "It has its own separate username and password, just for this tool."),
+    ],
+    "scope_of_usage": [
+        ("Individual", "Just you — one person."),
+        ("Classroom", "One classroom or a single class."),
+        ("Department", "One department or office."),
+        ("University", "An entire college or the whole university."),
     ],
     "estimated_users": [
         ("1-30", "A small group — up to about 30 people."),
@@ -162,6 +172,20 @@ HELP_HINTS = {
                 "use it — for example, 'it drafts email replies' or 'it suggests "
                 "grades on student quizzes.' Even a rough description helps.",
         "opt_out": None,
+    },
+    "vendor_tos_url": {
+        "help": "The Terms of Service (sometimes 'Terms of Use' or 'Terms & "
+                "Conditions') is usually linked in the footer of the vendor's "
+                "website. Paste the link, or ask me to find it for you.",
+        "opt_out": '"not sure"',
+    },
+    "vendor_accessibility_url": {
+        "help": "This is the vendor's accessibility documentation — often called "
+                "a VPAT or Accessibility Conformance Report — showing the software "
+                "works with screen readers and assistive tech. Check the vendor's "
+                "site (an 'Accessibility' or 'Trust' page), paste a link, or ask "
+                "me to find it.",
+        "opt_out": '"not sure"',
     },
 }
 
@@ -234,7 +258,7 @@ def _call_bedrock(question_id, reply, intake_context):
     client = boto3.client("bedrock-runtime", region_name=REGION)
     body = {
         "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 512,
+        "max_tokens": 768,
         "system": system,
         "messages": [{"role": "user", "content": user}],
         "tools": [tool],
@@ -379,7 +403,21 @@ Hard rules:
       lay the options out plainly (show_options true).
 - NEVER shut the conversation down. Do not give up, and do not return "unsure"
   as a way to end it. Always either resolve or ask a constructive next question.
-  There is always a next step you can take with them."""
+  There is always a next step you can take with them.
+
+Formatting: write PLAIN TEXT only — no markdown (**, __, #, backticks); it shows
+as literal characters. When you list options or choices, you MUST put each one on
+its OWN line, each starting with a number and a period, with a blank line before
+the list. NEVER put two options in the same line or run them together in a
+paragraph. Use this exact shape:
+
+Here are the options:
+
+1. Cloud — you log into it through a website or app.
+2. Campus servers — SDSU IT installs it for many people to share.
+3. Your own computer — you download and install it yourself.
+
+Which one sounds closest?"""
 
 
 def _converse_tool(enum):
@@ -433,6 +471,14 @@ def converse(question_id, question_text, history, intake_context=None):
     import boto3
 
     _, guidance = _load_prompt_section(q["prompt_section"])
+    if question_id in INTEGRATION_QUESTIONS:
+        guidance += _campus_systems_context()
+    if question_id == "shares_data_with_campus_system":
+        guidance += (
+            "\n\nIMPORTANT: a plain \"yes\", \"no\", or \"not sure\" is a COMPLETE answer "
+            "to THIS question — resolve it right away and confirm. Do NOT ask which system "
+            "or what data would be shared; a separate later question covers that."
+        )
     user_attempts = sum(1 for h in history if h.get("role") == "user")
     ctx = ""
     if intake_context:
@@ -474,7 +520,7 @@ plainly if they've struggled about twice.
     client = boto3.client("bedrock-runtime", region_name=REGION)
     body = {
         "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 600,
+        "max_tokens": 1200,
         "system": _CONVERSE_SYSTEM,
         "messages": [{"role": "user", "content": user}],
         "tools": [_converse_tool(q["enum"])],
@@ -510,7 +556,7 @@ def _normalize_turn(raw, q, user_attempts=0):
         "status": status,
         "answer": answer if answer in q["enum"] else None,
         "confidence": max(0.0, min(1.0, conf)),
-        "message": str(raw.get("message", "")).strip()[:600]
+        "message": _strip_markdown(str(raw.get("message", "")).strip())[:2000]
         or "Could you tell me a little more?",
         "show_options": show_options,
     }
@@ -540,38 +586,234 @@ def _converse_mock(question_id, question_text, history):
 # as the answer. Decides: is this a real answer, or are they asking for help?
 _ASSIST_SYSTEM = """You help a non-technical San Diego State University faculty/staff member fill
 out one open-text field on a software request form. Given the question and their
-reply, decide ONE thing: did they actually ANSWER it, or are they confused /
-asking YOU a question / asking where to find something?
+reply, decide: did they actually ANSWER it, are they confused / asking YOU a
+question, or are they asking you to FIND a document for them?
 
 - A real answer includes a substantive response, a pasted link/URL, or a valid
   opt-out like "no", "none", "not sure", "n/a".
-- If instead they ask a question back ("where do I find that?", "what do you
-  mean?", "how?") or express confusion, that is NOT an answer. Write a short,
-  warm, plain-English reply that actually helps them find or understand what's
-  being asked, and tell them what to type. Never treat a question-back as the
-  answer, and never end the conversation on it."""
+- If they ask a question back ("where do I find that?", "what do you mean?") or
+  express confusion, that is NOT an answer. Write a short, warm, plain-English
+  reply that helps them, and tell them what to type. Never treat a question-back
+  as the answer, and never end the conversation on it.
+- If they ask you to FIND, LOOK UP, SEARCH FOR, or RETRIEVE the document (and a
+  web_search is available for this question), search for it and give them the
+  actual document URL in your message. Only offer a URL you actually see in the
+  search results — never invent one. Prefer the vendor's own official page.
+
+Formatting: write PLAIN TEXT only — no markdown (**, __, #, backticks); the chat
+does not render it. A bare URL on its own line is fine. When you list options,
+put each on its OWN line starting with a number and a period (never run them
+together in one paragraph)."""
+
+# Open-text chatbot questions where the bot may search the web to fetch the
+# document, mapped to the kind of document to look for.
+DOC_SEARCH = {
+    "vendor_privacy_policy_url": "privacy policy",
+    "vendor_tos_url": "terms of service",
+    "vendor_accessibility_url": "VPAT accessibility conformance report",
+}
+SEARCH_QUESTIONS = set(DOC_SEARCH)  # membership checks throughout the assist flow
+
+# Document types the reviewer-side finder (find_document / POST /chatbot/find-document)
+# can look for — includes the security docs the discovery call named (HECVAT, SOC 2).
+REVIEWER_DOC_TYPES = {
+    "privacy_policy": "privacy policy",
+    "terms_of_service": "terms of service",
+    "vpat": "VPAT accessibility conformance report",
+    "hecvat": "HECVAT security assessment questionnaire",
+    "soc2": "SOC 2 report",
+}
+
+# Only the "which system(s)?" question gets the campus-systems context. The
+# yes/no "does it share data" question stays a clean yes/no — injecting the
+# systems there made it over-ask "which system?", which is this question's job.
+INTEGRATION_QUESTIONS = {"integration_explanation"}
+_CAMPUS_SYSTEMS_FILE = _HERE / "campus_systems.json"
 
 
-def _assist_tool():
+def _load_campus_systems():
+    """Read the IT-maintained campus-systems list FRESH each call, so edits to
+    campus_systems.json take effect immediately — no code change or redeploy.
+    IT owns that file; this code just reads whatever is currently in it.
+    """
+    try:
+        data = json.loads(_CAMPUS_SYSTEMS_FILE.read_text(encoding="utf-8"))
+        return data.get("systems", [])
+    except Exception:
+        return []
+
+
+def _campus_systems_context():
+    systems = _load_campus_systems()
+    if not systems:
+        return ""
+    lines = "\n".join(
+        f'- {s["name"]}: {s.get("what_it_is", "")} '
+        f'(also called: {", ".join(s.get("aliases", [])[:6])})'
+        for s in systems
+    )
+    return (
+        "\n\nKnown SDSU campus systems — recognize these when the requester names one "
+        "(even by a nickname or the data it holds, e.g. \"financial aid\" -> PeopleSoft "
+        "Campus Solutions / my.SDSU) and normalize to the official name in your reply. "
+        "If they're unsure which system, offer a few of these to jog their memory. Do "
+        "NOT require them to know the exact system — a data description is fine, IT will "
+        "confirm the system.\n"
+        "IMPORTANT: this list is the ONLY set of SDSU systems you may name. NEVER "
+        "mention a system that is not on it — for example SDSU uses Canvas, NOT "
+        "Blackboard, so never suggest Blackboard, Moodle, or any system not listed "
+        "below:\n" + lines
+    )
+
+
+def _web_search(query, max_results=5):
+    """Keyless DuckDuckGo search. Returns [{title,url,snippet}] (empty on failure).
+
+    Swap the provider here (Tavily/Brave/Serper with an API key) if you want
+    higher reliability than the keyless endpoint in production.
+    """
+    try:
+        from ddgs import DDGS
+
+        with DDGS() as d:
+            rows = list(d.text(query, max_results=max_results))
+    except Exception:
+        return []
+    out = []
+    for r in rows:
+        url = r.get("href") or r.get("url") or ""
+        if url:
+            out.append({
+                "title": (r.get("title") or "")[:120],
+                "url": url,
+                "snippet": (r.get("body") or "")[:200],
+            })
+    return out
+
+
+def _strip_markdown(text):
+    """The chat UI renders plain text, so remove markdown that would otherwise
+    show as literal characters (**bold**, __bold__, # headings, `code`). Leaves
+    dashes and numbered lists alone — those read fine as plain text."""
+    if not text:
+        return text
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)        # **bold** -> bold
+    text = re.sub(r"__(.+?)__", r"\1", text)            # __bold__ -> bold
+    text = re.sub(r"(?m)^\s{0,3}#{1,6}\s+", "", text)   # # / ## headings
+    text = text.replace("`", "")                         # `code`
+    return text
+
+
+def _registrable_domain(url):
+    """example.com from https://cdn.example.com/x — used to validate search hits."""
+    try:
+        import urllib.parse
+        netloc = urllib.parse.urlparse(url).netloc.lower()
+        if netloc.startswith("www."):
+            netloc = netloc[4:]
+        return ".".join(netloc.split(".")[-2:])
+    except Exception:
+        return ""
+
+
+def _assist_tool(can_search=False):
+    props = {
+        "is_answer": {"type": "boolean"},
+        "message": {
+            "type": "string",
+            "description": "If is_answer is false, a short helpful reply. If you found the document via search, put its URL here.",
+        },
+    }
+    if can_search:
+        props["needs_search"] = {
+            "type": "boolean",
+            "description": "True if the requester asked you to find/look up/retrieve the document and you should search the web for it.",
+        }
+        props["search_query"] = {
+            "type": ["string", "null"],
+            "description": "The web query to run when needs_search is true, e.g. 'DeepSeek privacy policy'.",
+        }
+        props["suggested_value"] = {
+            "type": ["string", "null"],
+            "description": "When you found the document via search, put its exact URL here to pre-fill it for the requester. Null otherwise.",
+        }
     return {
         "name": "record_assist",
-        "description": "Decide whether the reply is a real answer or a request for help.",
+        "description": "Decide whether the reply is a real answer, a request for help, or a request to search the web.",
         "input_schema": {
             "type": "object",
-            "properties": {
-                "is_answer": {"type": "boolean"},
-                "message": {
-                    "type": "string",
-                    "description": "If is_answer is false, a short helpful reply guiding them to an answer.",
-                },
-            },
+            "properties": props,
             "required": ["is_answer", "message"],
         },
     }
 
 
+def _assist_invoke(question_id, question_text, reply, intake_context, search_results=None):
+    import boto3
+
+    can_search = question_id in SEARCH_QUESTIONS
+    hint = HELP_HINTS.get(question_id, {})
+    guide = ""
+    if hint.get("help"):
+        guide = f"\nIf they need help, use this to guide them:\n{hint['help']}"
+        if hint.get("opt_out"):
+            guide += f"\nRemind them they may type {hint['opt_out']} if it doesn't apply."
+    if question_id in INTEGRATION_QUESTIONS:
+        guide += _campus_systems_context()
+    ctx = ""
+    if intake_context:
+        ctx = "\nContext from the form: " + ", ".join(
+            f"{k}={v}" for k, v in intake_context.items() if v
+        )
+    search_block = ""
+    if search_results is not None:
+        if search_results:
+            lines = "\n".join(f'- {r["title"]} — {r["url"]}' for r in search_results)
+            search_block = (
+                "\n\nWeb search results below. Pick the correct OFFICIAL document URL (prefer the "
+                "vendor's own domain). Then: set is_answer=false, put that URL in suggested_value, "
+                "set needs_search=false, and write a short message saying you found it and dropped "
+                "the link in for them to use (they can clear it if it's wrong). Do NOT set "
+                f"is_answer=true — they still need to confirm it.\n{lines}"
+            )
+        else:
+            search_block = (
+                "\n\nThe web search found nothing usable. Tell them you couldn't fetch it "
+                "automatically, guide them to the site footer, and set needs_search=false."
+            )
+    elif can_search:
+        search_block = (
+            "\n\nIf the requester is asking you to find/look up/search for/retrieve the document, "
+            "set needs_search=true and give a search_query using the vendor/software name from "
+            "context. Otherwise set needs_search=false."
+        )
+    user = (
+        f'The question: "{question_text}"{ctx}{guide}\n\n'
+        f'The requester replied:\n"""{reply}"""{search_block}\n\nCall record_assist.'
+    )
+    client = boto3.client("bedrock-runtime", region_name=REGION)
+    body = {
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": 1200,
+        "system": _ASSIST_SYSTEM,
+        "messages": [{"role": "user", "content": user}],
+        "tools": [_assist_tool(can_search)],
+        "tool_choice": {"type": "tool", "name": "record_assist"},
+    }
+    resp = client.invoke_model(modelId=MODEL_ID, body=json.dumps(body))
+    payload = json.loads(resp["body"].read())
+    for blk in payload.get("content", []):
+        if blk.get("type") == "tool_use" and blk.get("name") == "record_assist":
+            return blk["input"]
+    return {"is_answer": True, "message": ""}
+
+
 def assist_open_text(question_id, question_text, reply, intake_context=None):
-    """One assist turn for an open-text question. Returns {is_answer, message}."""
+    """One assist turn for an open-text question. Returns {is_answer, message}.
+
+    For document questions (SEARCH_QUESTIONS), if the requester asks the bot to
+    find/retrieve the document, it runs a real web search and returns the URL.
+    """
     reply = (reply or "").strip()
     # Pasted URL or explicit short opt-out -> definitely an answer, skip the model.
     low = reply.lower()
@@ -579,9 +821,9 @@ def assist_open_text(question_id, question_text, reply, intake_context=None):
         return {"is_answer": True, "message": ""}
 
     if (MODE or "").lower() == "mock":
-        # Offline: treat a reply ending in '?' or containing confusion words as a question.
         looks_confused = reply.endswith("?") or any(
-            w in low for w in ["where", "what do you mean", "how do i", "not sure what", "don't understand", "dont understand"]
+            w in low for w in ["where", "what do you mean", "how do i", "not sure what",
+                               "don't understand", "dont understand", "search", "find", "retrieve", "look up"]
         )
         if looks_confused:
             hint = HELP_HINTS.get(question_id, {})
@@ -591,43 +833,109 @@ def assist_open_text(question_id, question_text, reply, intake_context=None):
             return {"is_answer": False, "message": msg}
         return {"is_answer": True, "message": ""}
 
+    raw = _assist_invoke(question_id, question_text, reply, intake_context)
+
+    # If the model wants to search (and this question supports it), do it and re-ask
+    # with the results so it can hand back the actual document URL.
+    if question_id in SEARCH_QUESTIONS and raw.get("needs_search"):
+        vendor = (intake_context or {}).get("software_name") or ""
+        doc_label = DOC_SEARCH.get(question_id, "privacy policy")
+        query = raw.get("search_query") or (f"{vendor} {doc_label}" if vendor else doc_label)
+        results = _web_search(query)
+        raw = _assist_invoke(question_id, question_text, reply, intake_context, search_results=results)
+        # Anti-hallucination: only trust a suggested URL whose domain actually
+        # appeared in the real search results — never a plausible-looking guess.
+        sv = raw.get("suggested_value")
+        if sv:
+            allowed = {_registrable_domain(r["url"]) for r in results}
+            if _registrable_domain(sv) not in allowed or not allowed:
+                raw["suggested_value"] = None
+                raw["message"] = (
+                    "I searched but couldn't confirm the official link with confidence. "
+                    "Try the vendor's website footer for 'Privacy Policy', or just type \"not sure\"."
+                )
+
+    is_ans = bool(raw.get("is_answer", True))
+    suggested = None if is_ans else raw.get("suggested_value")
+    return {
+        "is_answer": is_ans,
+        "message": "" if is_ans else _strip_markdown(str(raw.get("message", "")))[:2000],
+        "suggested_value": suggested or None,
+    }
+
+
+# ---- Reviewer-side vendor-document finder -----------------------------------
+# Searches the web for a specific vendor document and returns the best OFFICIAL
+# public URL, domain-validated. Covers the security docs the discovery call named
+# (HECVAT, SOC 2) plus privacy policy / ToS / VPAT. Note: SOC 2 reports are often
+# NOT public (frequently under NDA), so "not found" is a common, honest result —
+# Michael Farley's ask was specifically to pull one "if publicly available."
+_PICK_SYSTEM = """You are given real web search results for a specific vendor document. Pick the
+single best URL that is the OFFICIAL document — prefer the vendor's own domain or
+an authoritative public copy. If none of the results is clearly that document,
+set found=false. Never invent a URL; only choose from the results shown."""
+
+
+def find_document(vendor_name, doc_type="privacy_policy"):
+    """Find a public vendor document. Returns
+    {found, url, title, doc_type, note, results}."""
+    vendor_name = (vendor_name or "").strip()
+    label = REVIEWER_DOC_TYPES.get(doc_type, doc_type)
+    empty = {"found": False, "url": None, "title": None, "doc_type": doc_type,
+             "note": "", "results": []}
+    if not vendor_name:
+        return {**empty, "note": "No vendor name provided."}
+
+    results = _web_search(f"{vendor_name} {label}")
+    if not results:
+        return {**empty, "note": "No search results."}
+    if (MODE or "").lower() == "mock":
+        top = results[0]
+        return {"found": True, "url": top["url"], "title": top["title"],
+                "doc_type": doc_type, "note": "top result (offline)", "results": results}
+
     import boto3
 
-    hint = HELP_HINTS.get(question_id, {})
-    guide = ""
-    if hint.get("help"):
-        guide = f"\nIf they need help, use this to guide them:\n{hint['help']}"
-        if hint.get("opt_out"):
-            guide += f"\nRemind them they may type {hint['opt_out']} if it doesn't apply."
-    ctx = ""
-    if intake_context:
-        ctx = "\nContext from the form: " + ", ".join(
-            f"{k}={v}" for k, v in intake_context.items() if v
-        )
-    user = (
-        f'The question: "{question_text}"{ctx}{guide}\n\n'
-        f'The requester replied:\n"""{reply}"""\n\nCall record_assist.'
-    )
+    lines = "\n".join(f'- {r["title"]} — {r["url"]}\n  {r["snippet"]}' for r in results)
+    tool = {
+        "name": "record_pick",
+        "description": "Pick the best official document URL from the results.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "found": {"type": "boolean"},
+                "url": {"type": ["string", "null"]},
+                "note": {"type": "string"},
+            },
+            "required": ["found", "note"],
+        },
+    }
+    user = (f'Vendor: {vendor_name}\nDocument wanted: {label}\n\n'
+            f'Search results:\n{lines}\n\nCall record_pick.')
     client = boto3.client("bedrock-runtime", region_name=REGION)
     body = {
-        "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 400,
-        "system": _ASSIST_SYSTEM,
+        "anthropic_version": "bedrock-2023-05-31", "max_tokens": 400,
+        "system": _PICK_SYSTEM,
         "messages": [{"role": "user", "content": user}],
-        "tools": [_assist_tool()],
-        "tool_choice": {"type": "tool", "name": "record_assist"},
+        "tools": [tool], "tool_choice": {"type": "tool", "name": "record_pick"},
     }
     resp = client.invoke_model(modelId=MODEL_ID, body=json.dumps(body))
     payload = json.loads(resp["body"].read())
+    pick = {}
     for blk in payload.get("content", []):
-        if blk.get("type") == "tool_use" and blk.get("name") == "record_assist":
-            raw = blk["input"]
-            is_ans = bool(raw.get("is_answer", True))
-            return {
-                "is_answer": is_ans,
-                "message": "" if is_ans else str(raw.get("message", ""))[:600],
-            }
-    return {"is_answer": True, "message": ""}  # fail open: accept the answer
+        if blk.get("type") == "tool_use" and blk.get("name") == "record_pick":
+            pick = blk["input"]
+            break
+
+    url = pick.get("url") if pick.get("found") else None
+    # Domain guard: only trust a URL whose domain actually appeared in results.
+    allowed = {_registrable_domain(r["url"]) for r in results}
+    if url and _registrable_domain(url) in allowed:
+        title = next((r["title"] for r in results if r["url"] == url), "")
+        return {"found": True, "url": url, "title": title, "doc_type": doc_type,
+                "note": str(pick.get("note", ""))[:300], "results": results}
+    return {**empty, "note": str(pick.get("note", "")) or "No confident match in results.",
+            "results": results}
 
 
 # ---- Software-name matching against the SDSU catalog -----------------------
@@ -727,7 +1035,7 @@ def match_software(software_name, use_description=None, catalog=None):
     client = boto3.client("bedrock-runtime", region_name=REGION)
     body = {
         "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 600,
+        "max_tokens": 900,
         "system": _MATCH_SYSTEM,
         "messages": [{"role": "user", "content": user}],
         "tools": [_match_tool(catalog)],
@@ -749,7 +1057,7 @@ def _normalize_match(raw, catalog):
     if matched not in names:
         matched = None
     alts = [
-        {"name": a.get("name"), "why": str(a.get("why", ""))[:200]}
+        {"name": a.get("name"), "why": _strip_markdown(str(a.get("why", "")))[:200]}
         for a in (raw.get("alternatives") or [])
         if isinstance(a, dict) and a.get("name") in names
     ]

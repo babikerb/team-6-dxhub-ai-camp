@@ -5,3 +5,4 @@
 !package.json
 # ...but the public SDSU catalog snapshot is safe and required by the matcher.
 !sdsu_catalog.json
+!campus_systems.json
