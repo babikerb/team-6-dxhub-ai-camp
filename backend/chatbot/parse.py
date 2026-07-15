@@ -447,6 +447,8 @@ def converse(question_id, question_text, history, intake_context=None):
     import boto3
 
     _, guidance = _load_prompt_section(q["prompt_section"])
+    if question_id in INTEGRATION_QUESTIONS:
+        guidance += _campus_systems_context()
     user_attempts = sum(1 for h in history if h.get("role") == "user")
     ctx = ""
     if intake_context:
@@ -587,6 +589,41 @@ REVIEWER_DOC_TYPES = {
     "soc2": "SOC 2 report",
 }
 
+# Integration questions where the bot should be fluent in SDSU's campus systems.
+INTEGRATION_QUESTIONS = {"shares_data_with_campus_system", "integration_explanation"}
+_CAMPUS_SYSTEMS_FILE = _HERE / "campus_systems.json"
+
+
+def _load_campus_systems():
+    """Read the IT-maintained campus-systems list FRESH each call, so edits to
+    campus_systems.json take effect immediately — no code change or redeploy.
+    IT owns that file; this code just reads whatever is currently in it.
+    """
+    try:
+        data = json.loads(_CAMPUS_SYSTEMS_FILE.read_text(encoding="utf-8"))
+        return data.get("systems", [])
+    except Exception:
+        return []
+
+
+def _campus_systems_context():
+    systems = _load_campus_systems()
+    if not systems:
+        return ""
+    lines = "\n".join(
+        f'- {s["name"]}: {s.get("what_it_is", "")} '
+        f'(also called: {", ".join(s.get("aliases", [])[:6])})'
+        for s in systems
+    )
+    return (
+        "\n\nKnown SDSU campus systems — recognize these when the requester names one "
+        "(even by a nickname or the data it holds, e.g. \"financial aid\" -> PeopleSoft "
+        "Campus Solutions / my.SDSU) and normalize to the official name in your reply. "
+        "If they're unsure which system, offer a few of these to jog their memory. Do "
+        "NOT require them to know the exact system — a data description is fine, IT will "
+        "confirm the system:\n" + lines
+    )
+
 
 def _web_search(query, max_results=5):
     """Keyless DuckDuckGo search. Returns [{title,url,snippet}] (empty on failure).
@@ -667,6 +704,8 @@ def _assist_invoke(question_id, question_text, reply, intake_context, search_res
         guide = f"\nIf they need help, use this to guide them:\n{hint['help']}"
         if hint.get("opt_out"):
             guide += f"\nRemind them they may type {hint['opt_out']} if it doesn't apply."
+    if question_id in INTEGRATION_QUESTIONS:
+        guide += _campus_systems_context()
     ctx = ""
     if intake_context:
         ctx = "\nContext from the form: " + ", ".join(
