@@ -495,6 +495,17 @@ function RequesterChat({ requestId }) {
     await runTurn(history);
   }
 
+  // "I don't know" button: run it through the conversation so the bot helps
+  // (explains the options) rather than dead-ending.
+  async function submitDontKnow() {
+    if (parsing) return;
+    const text = "I don't know";
+    setLog((l) => [...l, { from: "user", text }]);
+    const history = [...convo, { role: "user", text }];
+    setConvo(history);
+    await runTurn(history);
+  }
+
   function confirmYes() {
     if (!pending) return;
     setLog((l) => [...l, { from: "user", text: "Yes, that's right" }]);
@@ -658,23 +669,27 @@ function RequesterChat({ requestId }) {
                   {parsing ? "…" : "Send"}
                 </button>
               </div>
-              {revealButtons && (
-                <React.Fragment>
-                  <div style={styles.orChoose}>or choose one</div>
-                  <div style={styles.choiceList}>
-                    {currentStep.options.map((opt) => (
-                      <button
-                        key={opt.value}
-                        style={styles.choiceRow}
-                        onClick={() => advance(opt.value, opt.label)}
-                      >
-                        <span>{opt.label}</span>
-                        <span style={styles.choiceMark}>&rarr;</span>
-                      </button>
-                    ))}
-                  </div>
-                </React.Fragment>
-              )}
+              <div style={styles.orChoose}>or choose one</div>
+              <div style={styles.choiceList}>
+                {currentStep.options.map((opt) => (
+                  <button
+                    key={opt.value}
+                    style={styles.choiceRow}
+                    onClick={() => advance(opt.value, opt.label)}
+                  >
+                    <span>{opt.label}</span>
+                    <span style={styles.choiceMark}>&rarr;</span>
+                  </button>
+                ))}
+                <button
+                  style={styles.choiceRow}
+                  onClick={submitDontKnow}
+                  disabled={parsing}
+                >
+                  <span>I don't know</span>
+                  <span style={styles.choiceMark}>?</span>
+                </button>
+              </div>
             </div>
           ) : currentStep.type === "choice" ? (
             <div style={styles.choiceList}>
@@ -713,6 +728,13 @@ function RequesterChat({ requestId }) {
                     </button>
                   );
                 })}
+                <button
+                  style={styles.choiceRow}
+                  onClick={() => advance([], "Not sure")}
+                >
+                  <span>I don't know</span>
+                  <span style={styles.choiceMark}>?</span>
+                </button>
               </div>
               <div style={styles.textRow}>
                 <button style={styles.textSubmit} onClick={submitMulti} disabled={multiSelected.length === 0}>

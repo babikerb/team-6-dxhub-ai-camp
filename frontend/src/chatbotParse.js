@@ -20,6 +20,7 @@ export const ASSISTED_TEXT = new Set([
 export const PARSEABLE = new Set([
   "software_category",
   "shares_data_with_campus_system",
+  "scope_of_usage",
   "estimated_users",
   "interaction_method",
   "sso_capable",

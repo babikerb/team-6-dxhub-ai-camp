@@ -57,6 +57,10 @@ QUESTIONS = {
         "enum": ["yes", "no", "unsure"],
         "prompt_section": "shares_data_with_campus_system",
     },
+    "scope_of_usage": {
+        "enum": ["Individual", "Classroom", "Department", "University", "unsure"],
+        "prompt_section": "scope_of_usage",
+    },
     "estimated_users": {
         "enum": ["1-30", "30-100", "100+", "unsure"],
         "prompt_section": "estimated_users",
@@ -105,6 +109,12 @@ OPTION_GUIDE = {
     "sso_capable": [
         ("yes", "You log in with your regular SDSUid — the same login as other campus systems."),
         ("no", "It has its own separate username and password, just for this tool."),
+    ],
+    "scope_of_usage": [
+        ("Individual", "Just you — one person."),
+        ("Classroom", "One classroom or a single class."),
+        ("Department", "One department or office."),
+        ("University", "An entire college or the whole university."),
     ],
     "estimated_users": [
         ("1-30", "A small group — up to about 30 people."),
