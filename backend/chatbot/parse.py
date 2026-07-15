@@ -248,7 +248,7 @@ def _call_bedrock(question_id, reply, intake_context):
     client = boto3.client("bedrock-runtime", region_name=REGION)
     body = {
         "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 512,
+        "max_tokens": 768,
         "system": system,
         "messages": [{"role": "user", "content": user}],
         "tools": [tool],
@@ -488,7 +488,7 @@ plainly if they've struggled about twice.
     client = boto3.client("bedrock-runtime", region_name=REGION)
     body = {
         "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 600,
+        "max_tokens": 1200,
         "system": _CONVERSE_SYSTEM,
         "messages": [{"role": "user", "content": user}],
         "tools": [_converse_tool(q["enum"])],
@@ -524,7 +524,7 @@ def _normalize_turn(raw, q, user_attempts=0):
         "status": status,
         "answer": answer if answer in q["enum"] else None,
         "confidence": max(0.0, min(1.0, conf)),
-        "message": str(raw.get("message", "")).strip()[:600]
+        "message": str(raw.get("message", "")).strip()[:2000]
         or "Could you tell me a little more?",
         "show_options": show_options,
     }
@@ -701,7 +701,7 @@ def _assist_invoke(question_id, question_text, reply, intake_context, search_res
     client = boto3.client("bedrock-runtime", region_name=REGION)
     body = {
         "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 500,
+        "max_tokens": 1200,
         "system": _ASSIST_SYSTEM,
         "messages": [{"role": "user", "content": user}],
         "tools": [_assist_tool(can_search)],
@@ -766,7 +766,7 @@ def assist_open_text(question_id, question_text, reply, intake_context=None):
     suggested = None if is_ans else raw.get("suggested_value")
     return {
         "is_answer": is_ans,
-        "message": "" if is_ans else str(raw.get("message", ""))[:800],
+        "message": "" if is_ans else str(raw.get("message", ""))[:2000],
         "suggested_value": suggested or None,
     }
 
@@ -821,7 +821,7 @@ def find_document(vendor_name, doc_type="privacy_policy"):
             f'Search results:\n{lines}\n\nCall record_pick.')
     client = boto3.client("bedrock-runtime", region_name=REGION)
     body = {
-        "anthropic_version": "bedrock-2023-05-31", "max_tokens": 300,
+        "anthropic_version": "bedrock-2023-05-31", "max_tokens": 400,
         "system": _PICK_SYSTEM,
         "messages": [{"role": "user", "content": user}],
         "tools": [tool], "tool_choice": {"type": "tool", "name": "record_pick"},
@@ -942,7 +942,7 @@ def match_software(software_name, use_description=None, catalog=None):
     client = boto3.client("bedrock-runtime", region_name=REGION)
     body = {
         "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 600,
+        "max_tokens": 900,
         "system": _MATCH_SYSTEM,
         "messages": [{"role": "user", "content": user}],
         "tools": [_match_tool(catalog)],
