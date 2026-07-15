@@ -18,13 +18,14 @@ from decimal import Decimal
 import boto3
 
 _TABLE_NAME = os.environ.get("TABLE_NAME", "SoftwareRequests")
+_AWS_REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-west-2"
 _table = None
 
 
 def _get_table():
     global _table
     if _table is None:
-        _table = boto3.resource("dynamodb").Table(_TABLE_NAME)
+        _table = boto3.resource("dynamodb", region_name=_AWS_REGION).Table(_TABLE_NAME)
     return _table
 
 
