@@ -589,8 +589,10 @@ REVIEWER_DOC_TYPES = {
     "soc2": "SOC 2 report",
 }
 
-# Integration questions where the bot should be fluent in SDSU's campus systems.
-INTEGRATION_QUESTIONS = {"shares_data_with_campus_system", "integration_explanation"}
+# Only the "which system(s)?" question gets the campus-systems context. The
+# yes/no "does it share data" question stays a clean yes/no — injecting the
+# systems there made it over-ask "which system?", which is this question's job.
+INTEGRATION_QUESTIONS = {"integration_explanation"}
 _CAMPUS_SYSTEMS_FILE = _HERE / "campus_systems.json"
 
 
@@ -621,7 +623,11 @@ def _campus_systems_context():
         "Campus Solutions / my.SDSU) and normalize to the official name in your reply. "
         "If they're unsure which system, offer a few of these to jog their memory. Do "
         "NOT require them to know the exact system — a data description is fine, IT will "
-        "confirm the system:\n" + lines
+        "confirm the system.\n"
+        "IMPORTANT: this list is the ONLY set of SDSU systems you may name. NEVER "
+        "mention a system that is not on it — for example SDSU uses Canvas, NOT "
+        "Blackboard, so never suggest Blackboard, Moodle, or any system not listed "
+        "below:\n" + lines
     )
 
 
