@@ -1,0 +1,330 @@
+[
+  {
+    "name": "ArcGIS",
+    "developer": "ESRI",
+    "category": "Cloud Computing",
+    "description": "Cloud-based software to create and share interactive web maps.",
+    "aliases": [
+      "gis",
+      "mapping software",
+      "geographic information system"
+    ]
+  },
+  {
+    "name": "Azure",
+    "developer": "Microsoft",
+    "category": "Cloud Computing",
+    "description": "Cloud access, developer resources, and learning materials.",
+    "aliases": [
+      "microsoft azure",
+      "azure cloud",
+      "cloud hosting"
+    ]
+  },
+  {
+    "name": "Camtasia",
+    "developer": "Techsmith",
+    "category": "Design",
+    "description": "Software for creating and recording video tutorials and presentations.",
+    "aliases": [
+      "screen recording software",
+      "video tutorial software"
+    ]
+  },
+  {
+    "name": "Canvas",
+    "developer": "Instructure",
+    "category": "Learning Management",
+    "description": "Learning management system built to make teaching and learning easier.",
+    "aliases": [
+      "lms",
+      "learning management system",
+      "blackboard",
+      "moodle",
+      "brightspace",
+      "d2l"
+    ]
+  },
+  {
+    "name": "ChatGPT",
+    "developer": "OpenAI",
+    "category": "Artificial Intelligence",
+    "description": "Advanced conversational AI language model.",
+    "aliases": [
+      "gpt",
+      "openai",
+      "chat gpt",
+      "ai chatbot"
+    ]
+  },
+  {
+    "name": "Copilot",
+    "developer": "Microsoft",
+    "category": "Artificial Intelligence",
+    "description": "AI assistant for work using large language models and web information.",
+    "aliases": [
+      "microsoft copilot",
+      "github copilot",
+      "ai assistant"
+    ]
+  },
+  {
+    "name": "Creative Cloud",
+    "developer": "Adobe",
+    "category": "Design",
+    "description": "Applications and services for graphic design, video editing, web development, and photography.",
+    "aliases": [
+      "adobe",
+      "photoshop",
+      "illustrator",
+      "premiere",
+      "premiere pro",
+      "indesign",
+      "after effects",
+      "lightroom",
+      "acrobat"
+    ]
+  },
+  {
+    "name": "Duo Security",
+    "developer": "Duo",
+    "category": "Security and Compliance",
+    "description": "Two-factor authentication solution.",
+    "aliases": [
+      "duo",
+      "two factor authentication",
+      "2fa",
+      "mfa",
+      "authenticator"
+    ]
+  },
+  {
+    "name": "EndNote",
+    "developer": "Clarivate",
+    "category": "Reference Management",
+    "description": "Reference management software to manage bibliographies and references.",
+    "aliases": [
+      "zotero",
+      "mendeley",
+      "reference manager",
+      "citation manager"
+    ]
+  },
+  {
+    "name": "FastX XWin32",
+    "developer": "Starnet",
+    "category": "Desktop & Mobile Computing",
+    "description": "Remote Linux X Windows display solution.",
+    "aliases": [
+      "x windows",
+      "remote linux display",
+      "xwin32"
+    ]
+  },
+  {
+    "name": "Gemini",
+    "developer": "Google",
+    "category": "Artificial Intelligence",
+    "description": "Direct access to Google AI for writing, planning, and learning.",
+    "aliases": [
+      "google gemini",
+      "google ai",
+      "bard"
+    ]
+  },
+  {
+    "name": "Globus",
+    "developer": "Globus",
+    "category": "Data Analysis and Programming",
+    "description": "Secure data management service to transfer, share, and access large-scale datasets.",
+    "aliases": [
+      "file transfer",
+      "large dataset transfer",
+      "globus connect"
+    ]
+  },
+  {
+    "name": "Google Workspace",
+    "developer": "Google",
+    "category": "Communication & Collaboration",
+    "description": "Cloud computing, productivity, and collaboration tools.",
+    "aliases": [
+      "google docs",
+      "google sheets",
+      "google slides",
+      "gmail",
+      "google drive",
+      "google calendar",
+      "google forms",
+      "g suite"
+    ]
+  },
+  {
+    "name": "Gradescope",
+    "developer": "Turnitin",
+    "category": "Learning Management",
+    "description": "Helps instructors grade problem sets and other assignments more quickly and consistently.",
+    "aliases": [
+      "grading software",
+      "assignment grading"
+    ]
+  },
+  {
+    "name": "MATLAB",
+    "developer": "MathWorks",
+    "category": "Data Analysis and Programming",
+    "description": "High-performance programming environment for numerical computing and data analysis.",
+    "aliases": [
+      "numerical computing",
+      "simulink"
+    ]
+  },
+  {
+    "name": "Mediasite",
+    "developer": "Sonic Foundry",
+    "category": "Communication & Collaboration",
+    "description": "Video and media platform to create, manage, and distribute video content.",
+    "aliases": [
+      "video hosting",
+      "lecture capture"
+    ]
+  },
+  {
+    "name": "Microsoft 365",
+    "developer": "Microsoft",
+    "category": "Business Application",
+    "description": "Create, share, and collaborate with Word, Excel, PowerPoint, Outlook, and more.",
+    "aliases": [
+      "office 365",
+      "microsoft word",
+      "microsoft excel",
+      "microsoft powerpoint",
+      "microsoft outlook",
+      "onedrive",
+      "microsoft teams",
+      "ms office"
+    ]
+  },
+  {
+    "name": "Modern Campus CMS",
+    "developer": "SDSU IT",
+    "category": "Cloud Computing",
+    "description": "Web content management system operated by IT's Web Services group.",
+    "aliases": [
+      "cms",
+      "content management system",
+      "website builder",
+      "wordpress"
+    ]
+  },
+  {
+    "name": "NVivo",
+    "developer": "Lumivero",
+    "category": "Data Analysis and Programming",
+    "description": "Qualitative data analysis software for research insights.",
+    "aliases": [
+      "qualitative data analysis",
+      "atlas.ti"
+    ]
+  },
+  {
+    "name": "Poll Everywhere",
+    "developer": "Poll Everywhere",
+    "category": "Communication & Collaboration",
+    "description": "Web-based audience response system for live activities in presentations.",
+    "aliases": [
+      "kahoot",
+      "mentimeter",
+      "clicker",
+      "live polling",
+      "audience response"
+    ]
+  },
+  {
+    "name": "Qualtrics",
+    "developer": "IBM",
+    "category": "Survey and Data Collection",
+    "description": "Cloud-based platform to design, distribute, and analyze surveys and feedback.",
+    "aliases": [
+      "surveymonkey",
+      "google forms",
+      "survey tool",
+      "survey software"
+    ]
+  },
+  {
+    "name": "SAS",
+    "developer": "SAS Software",
+    "category": "Data Analysis and Programming",
+    "description": "Analytics suite to manage data, perform statistical analyses, and generate insights.",
+    "aliases": [
+      "statistical analysis",
+      "stata"
+    ]
+  },
+  {
+    "name": "ServiceNow",
+    "developer": "ServiceNow",
+    "category": "Business Application",
+    "description": "Define, manage, automate, and structure IT services.",
+    "aliases": [
+      "ticketing system",
+      "it service management",
+      "helpdesk software",
+      "jira service desk"
+    ]
+  },
+  {
+    "name": "Snagit",
+    "developer": "TechSmith",
+    "category": "Design",
+    "description": "Screen capture and screen recording software for Windows and macOS.",
+    "aliases": [
+      "screenshot tool",
+      "screen capture"
+    ]
+  },
+  {
+    "name": "SPSS",
+    "developer": "IBM",
+    "category": "Data Analysis and Programming",
+    "description": "Statistical analysis tool for data management and complex analyses.",
+    "aliases": [
+      "statistical analysis",
+      "stata"
+    ]
+  },
+  {
+    "name": "Turnitin",
+    "developer": "Turnitin",
+    "category": "Security and Compliance",
+    "description": "Internet-based similarity detection service.",
+    "aliases": [
+      "plagiarism checker",
+      "plagiarism detection",
+      "similarity detection"
+    ]
+  },
+  {
+    "name": "WeVideo",
+    "developer": "WeVideo",
+    "category": "Communication & Collaboration",
+    "description": "Adds real-time questions and interactions to video content.",
+    "aliases": [
+      "video editor",
+      "video creation"
+    ]
+  },
+  {
+    "name": "Zoom",
+    "developer": "Zoom Video Communications",
+    "category": "Communication & Collaboration",
+    "description": "Consolidates communications and helps people connect and collaborate.",
+    "aliases": [
+      "webex",
+      "google meet",
+      "video conferencing",
+      "teams meeting"
+    ]
+  }
+]

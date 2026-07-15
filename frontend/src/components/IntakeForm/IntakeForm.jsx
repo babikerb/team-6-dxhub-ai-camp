@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { createRequest } from "./api.js";
-import { matchCatalog } from "./catalog.js";
+import { createRequest, matchSoftware } from "./api.js";
+import { matchCatalog, SDSU_CATALOG } from "./catalog.js";
 
 // ---- Field config (mirrors the 18 questions in Chatbot_Questions_and_Flags.md, Part A) ----
 // SECTIONS groups fields for the review screen and for lookups (ALL_FIELDS/FIELD_MAP).
@@ -276,9 +276,11 @@ function IntakeForm({ onSubmitted }) {
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
-  const [view, setView] = useState("question"); // "question" | "catalogMatch" | "review" | "ended" | "confirmation"
+  const [view, setView] = useState("question"); // "question" | "catalogMatch" | "alternatives" | "review" | "ended" | "confirmation"
   const [stepIndex, setStepIndex] = useState(0);
   const [catalogMatches, setCatalogMatches] = useState([]);
+  const [alternatives, setAlternatives] = useState([]);
+  const [checking, setChecking] = useState(false);
   const [pendingStepIndex, setPendingStepIndex] = useState(null);
   const [requestId, setRequestId] = useState(null);
   const [copied, setCopied] = useState(false);
@@ -324,7 +326,7 @@ function IntakeForm({ onSubmitted }) {
     }
   }
 
-  function handleNext() {
+  async function handleNext() {
     const group = STEPS[stepIndex];
     const groupErrors = {};
     for (const fieldId of group.fields) {
@@ -338,12 +340,47 @@ function IntakeForm({ onSubmitted }) {
     for (const fieldId of group.fields) clearError(fieldId);
 
     if (group.fields.includes("software_name")) {
+      setPendingStepIndex(stepIndex + 1 >= STEPS.length ? STEPS.length : stepIndex + 1);
+
+      // 1) Instant keyword check for exact/alias hits (no network).
       const matches = matchCatalog(form.software_name);
       if (matches.length > 0) {
         setCatalogMatches(matches);
-        setPendingStepIndex(stepIndex + 1 >= STEPS.length ? STEPS.length : stepIndex + 1);
         setView("catalogMatch");
         return;
+      }
+
+      // 2) Fuzzy/semantic check + approved alternatives via the LLM matcher.
+      //    Catches variants/typos/rebrands the keyword pass misses, and suggests
+      //    approved options when SDSU doesn't offer the requested tool.
+      setChecking(true);
+      try {
+        const r = await matchSoftware(form.software_name, form.use_description, SDSU_CATALOG);
+        if (r.status === "offered" && r.matched_name) {
+          const entry = SDSU_CATALOG.find((e) => e.name === r.matched_name);
+          if (entry) {
+            setCatalogMatches([entry]);
+            setView("catalogMatch");
+            return;
+          }
+        } else if (r.status === "alternative_available" && (r.alternatives || []).length > 0) {
+          const alts = r.alternatives
+            .map((a) => {
+              const entry = SDSU_CATALOG.find((e) => e.name === a.name);
+              return entry ? { ...entry, why: a.why } : null;
+            })
+            .filter(Boolean);
+          if (alts.length > 0) {
+            setAlternatives(alts);
+            setView("alternatives");
+            return;
+          }
+        }
+        // "not_found" (or nothing usable) — fall through and continue the request.
+      } catch {
+        // Matcher unavailable — never block the requester; just continue.
+      } finally {
+        setChecking(false);
       }
     }
 
@@ -367,6 +404,7 @@ function IntakeForm({ onSubmitted }) {
     setForm(initialFormState());
     setErrors({});
     setCatalogMatches([]);
+    setAlternatives([]);
     setPendingStepIndex(null);
     setStepIndex(0);
     setSubmitError(null);
@@ -525,8 +563,13 @@ function IntakeForm({ onSubmitted }) {
           >
             Back
           </button>
-          <button type="button" onClick={handleNext} style={styles.nextButton}>
-            {stepIndex === total - 1 ? "Review answers" : "Next"}
+          <button
+            type="button"
+            onClick={handleNext}
+            disabled={checking}
+            style={{ ...styles.nextButton, ...(checking ? styles.navButtonDisabled : null) }}
+          >
+            {checking ? "Checking SDSU catalog…" : stepIndex === total - 1 ? "Review answers" : "Next"}
           </button>
         </div>
       </div>
@@ -554,6 +597,41 @@ function IntakeForm({ onSubmitted }) {
             None of these fit. Continue my request anyway
           </button>
         </div>
+      </div>
+    );
+  }
+
+  function renderAlternatives() {
+    return (
+      <div style={styles.body}>
+        <div style={styles.catalogHeading}>SDSU may already have an approved option</div>
+        <div style={styles.catalogSubheading}>
+          SDSU doesn't currently offer "{form.software_name}", but these approved tools may cover the
+          same need — choosing one can skip the review entirely:
+        </div>
+        <div style={styles.catalogList}>
+          {alternatives.map((m) => (
+            <div key={m.name} style={styles.catalogCard}>
+              <div style={styles.catalogCardTitle}>{m.name}</div>
+              <div style={styles.catalogCardMeta}>{m.developer} · {m.category}</div>
+              <div style={styles.catalogCardDesc}>{m.description}</div>
+              {m.why && <div style={styles.altWhy}>Why this fits: {m.why}</div>}
+              <a href={m.url} target="_blank" rel="noreferrer" style={styles.catalogCardLink}>
+                View on SDSU IT catalog →
+              </a>
+            </div>
+          ))}
+        </div>
+        <button
+          type="button"
+          onClick={() => { setCatalogMatches(alternatives); setView("ended"); }}
+          style={styles.nextButton}
+        >
+          One of these works — I don't need to submit a request
+        </button>
+        <button type="button" onClick={continueAfterCatalogMatch} style={styles.continueLink}>
+          None of these fit — continue my request anyway
+        </button>
       </div>
     );
   }
@@ -654,6 +732,7 @@ function IntakeForm({ onSubmitted }) {
 
         {view === "question" && renderQuestion()}
         {view === "catalogMatch" && renderCatalogMatch()}
+        {view === "alternatives" && renderAlternatives()}
         {view === "ended" && renderEnded()}
         {view === "review" && renderReview()}
         {view === "confirmation" && renderConfirmation()}
@@ -999,6 +1078,16 @@ const styles = {
     fontWeight: 700,
     textDecoration: "none",
     marginTop: "4px",
+  },
+  altWhy: {
+    fontSize: "12.5px",
+    color: "#1A1A1A",
+    background: "#FFF6E9",
+    border: "1px solid #F0E0C0",
+    borderRadius: "8px",
+    padding: "6px 10px",
+    marginTop: "4px",
+    lineHeight: 1.4,
   },
   catalogActions: {
     display: "flex",

@@ -39,6 +39,9 @@ describe("answersToItReview", () => {
       compliance_requirements: false,
       compliance_note: null,
       vendor_privacy_policy_url: null,
+      ai_capabilities: false,
+      ai_use_description: null,
+      ai_automated_decisions: false,
     });
   });
 

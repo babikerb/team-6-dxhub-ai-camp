@@ -18,7 +18,17 @@ import uvicorn
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from handlers import admin_patch, chatbot_patch, create_request, get_request, list_requests
+from handlers import (
+    admin_patch,
+    chatbot_assist,
+    chatbot_converse,
+    chatbot_match,
+    chatbot_parse,
+    chatbot_patch,
+    create_request,
+    get_request,
+    list_requests,
+)
 
 app = FastAPI(title="SoftwareRequests API (local mock)")
 
@@ -78,6 +88,30 @@ async def chatbot_patch_route(request: Request, request_id: str):
 async def admin_patch_route(request: Request, request_id: str):
     event = await _to_event(request, {"id": request_id})
     return _from_lambda_response(admin_patch.handler(event))
+
+
+@app.post("/chatbot/parse")
+async def chatbot_parse_route(request: Request):
+    event = await _to_event(request)
+    return _from_lambda_response(chatbot_parse.handler(event))
+
+
+@app.post("/chatbot/converse")
+async def chatbot_converse_route(request: Request):
+    event = await _to_event(request)
+    return _from_lambda_response(chatbot_converse.handler(event))
+
+
+@app.post("/chatbot/assist")
+async def chatbot_assist_route(request: Request):
+    event = await _to_event(request)
+    return _from_lambda_response(chatbot_assist.handler(event))
+
+
+@app.post("/chatbot/match-software")
+async def chatbot_match_route(request: Request):
+    event = await _to_event(request)
+    return _from_lambda_response(chatbot_match.handler(event))
 
 
 @app.get("/health")

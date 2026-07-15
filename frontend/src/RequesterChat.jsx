@@ -1,9 +1,14 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { converseTurn, assistText, PARSEABLE, ASSISTED_TEXT } from "./chatbotParse.js";
 import { getRequest, submitChatbotReview } from "./api.js";
 import { answersToItReview } from "./itReview.js";
 
 // -----------------------------------------------------------------
 // MASTER QUESTION LIST (Part B)
+// Each step: id, label (short tag shown next to bot message), bot text,
+// type: "text" | "choice" | "multiselect",
+// options (for choice/multiselect),
+// skip(answers) -> true if this step should be skipped given answers so far
 // software_name / scope_of_usage are skipped when already present from
 // the intake form (pre-seeded into answers on load).
 // -----------------------------------------------------------------
@@ -43,60 +48,95 @@ const STEPS = [
   {
     id: "interaction_method",
     label: "Access",
-    bot: "Will people mainly use it on a computer, a phone or tablet, through a web browser, or a mix? Select all that apply.",
+    bot: "How will people access it? Select all that apply.",
     type: "multiselect",
     options: [
-      { label: "Computer", value: "computer" },
-      { label: "Phone or tablet", value: "mobile" },
-      { label: "Web browser", value: "browser" },
+      { label: "Installed on a computer", value: "computer" },
+      { label: "A mobile app", value: "mobile" },
+      { label: "Through a web browser", value: "browser" },
+      { label: "Not sure yet", value: "not sure" },
     ],
   },
   {
     id: "software_category",
     label: "Hosting",
-    bot: "Where does this software actually run?",
+    bot: "Where does the software actually run?",
     type: "choice",
     options: [
-      { label: "Installed by IT on a campus server", value: "onprem-datacenter" },
-      { label: "Installed on your own computer", value: "onprem-local" },
-      { label: "Something you log into online (a website/cloud app)", value: "cloud" },
-      { label: "A small add-on inside another app you already use", value: "addon" },
+      { label: "On SDSU's own servers (data center)", value: "onprem-datacenter" },
+      { label: "Installed locally on a device", value: "onprem-local" },
+      { label: "In the cloud (a vendor's website/platform)", value: "cloud" },
+      { label: "It's a plug-in / add-on to something we already use", value: "addon" },
     ],
   },
   {
     id: "shares_data_with_campus_system",
     label: "Integration",
-    bot: "Will this software need to send or receive information with any other SDSU system, like Canvas, Oracle, or PeopleSoft/mySDSU?",
+    bot: "Will this software need to send or receive data from other SDSU systems — like class rosters, email, or student records?",
     type: "choice",
     options: [
       { label: "Yes", value: "yes" },
       { label: "No", value: "no" },
+      { label: "Not sure", value: "unsure" },
     ],
   },
   {
     id: "integration_explanation",
     label: "Integration",
-    bot: "Which system(s), and what kind of information would be shared?",
+    bot: "Briefly, what data does it exchange, and with which SDSU system?",
     type: "text",
-    placeholder: "e.g. Canvas — class roster and grades",
+    placeholder: "e.g. rosters from Canvas via LTI",
     skip: (a) => a.shares_data_with_campus_system !== "yes",
   },
   {
     id: "sso_capable",
     label: "Login",
-    bot: "Can people log in with their regular SDSUid — the same login as other campus systems — or does it use a separate username/password?",
+    bot: "Can people log in with their SDSU account (single sign-on), or does it need a separate username/password?",
     type: "choice",
     options: [
-      { label: "Yes, uses SDSUid", value: "yes" },
+      { label: "Yes, SDSU single sign-on", value: "yes" },
       { label: "No, separate login", value: "no" },
       { label: "Not sure", value: "unsure" },
     ],
   },
-  // Block A — always asked
+  // AI capabilities — California Automated Decision System (ADS) tracking, AB 302.
+  // Captured up front so SDSU can inventory AI/ADS software instead of after the fact.
+  {
+    id: "ai_capabilities",
+    label: "AI",
+    bot: "Does this software use AI? For example, it writes or makes things for you, answers questions, gives suggestions, or figures things out on its own.",
+    type: "choice",
+    options: [
+      { label: "Yes", value: "yes" },
+      { label: "No", value: "no" },
+      { label: "Not sure", value: "unsure" },
+    ],
+  },
+  {
+    id: "ai_use_description",
+    label: "AI",
+    bot: "What do those AI features do, and how do you plan to use them?",
+    type: "text",
+    placeholder: "e.g. drafts email replies; suggests grades on quizzes",
+    skip: (a) => a.ai_capabilities !== "yes",
+  },
+  {
+    id: "ai_automated_decisions",
+    label: "AI",
+    bot: "Does it help decide things about people — like who gets admitted or hired, who receives financial aid, or what grade someone gets?",
+    type: "choice",
+    options: [
+      { label: "Yes", value: "yes" },
+      { label: "No", value: "no" },
+      { label: "Not sure", value: "unsure" },
+    ],
+    skip: (a) => a.ai_capabilities !== "yes",
+  },
+  // Data & compliance — Block A (always asked)
   {
     id: "la_health",
     label: "Data",
-    bot: "Will it handle health or medical information — the kind a doctor's office or student health center would keep?",
+    bot: "Will it ever store or handle health records (HIPAA-covered information)?",
     type: "choice",
     options: [
       { label: "Yes", value: "yes" },
@@ -106,7 +146,7 @@ const STEPS = [
   {
     id: "la_pii",
     label: "Data",
-    bot: "Will it store personal ID details like Social Security numbers, driver's license numbers, or dates of birth?",
+    bot: "Will it store personal identifiers like Social Security numbers, driver's license, or passport numbers?",
     type: "choice",
     options: [
       { label: "Yes", value: "yes" },
@@ -116,7 +156,7 @@ const STEPS = [
   {
     id: "la_payment",
     label: "Data",
-    bot: "Will it process credit card payments or store banking/payment information?",
+    bot: "Will it process credit card, banking, or other payment/financial account details?",
     type: "choice",
     options: [
       { label: "Yes", value: "yes" },
@@ -126,18 +166,18 @@ const STEPS = [
   {
     id: "la_lawenforcement",
     label: "Data",
-    bot: "Will it store or access law enforcement or campus police records?",
+    bot: "Will it store law enforcement or background-check records?",
     type: "choice",
     options: [
       { label: "Yes", value: "yes" },
       { label: "No", value: "no" },
     ],
   },
-  // Block B — only asked if Block A was all "no"
+  // Data & compliance — Block B (only if every Block A question was "no")
   {
     id: "lb_coursework",
     label: "Data",
-    bot: "Will students use this for coursework, grading, or advising?",
+    bot: "Will it involve student education records — grades, coursework, enrollment (FERPA)?",
     type: "choice",
     options: [
       { label: "Yes", value: "yes" },
@@ -149,7 +189,7 @@ const STEPS = [
   {
     id: "lb_employee",
     label: "Data",
-    bot: "Will it store employee info — personnel files, salaries, performance reviews?",
+    bot: "Will it involve employee information — HR records, payroll, performance reviews?",
     type: "choice",
     options: [
       { label: "Yes", value: "yes" },
@@ -161,7 +201,7 @@ const STEPS = [
   {
     id: "lb_budget",
     label: "Data",
-    bot: "Will it access campus budgets or internal financial records (not card payments)?",
+    bot: "Will it involve SDSU financial or budget data?",
     type: "choice",
     options: [
       { label: "Yes", value: "yes" },
@@ -237,6 +277,12 @@ function RequesterChat({ requestId }) {
   const [textInput, setTextInput] = useState("");
   const [multiSelected, setMultiSelected] = useState([]);
   const [done, setDone] = useState(false);
+  // Conversational (Bedrock) state for parseable choice questions:
+  const [parsing, setParsing] = useState(false);       // waiting on the model
+  const [pending, setPending] = useState(null);        // {value,label} awaiting confirm
+  const [revealButtons, setRevealButtons] = useState(false); // model laid out options
+  const [convo, setConvo] = useState([]);              // per-question turn history
+  // Backend load/persist state:
   const [loading, setLoading] = useState(Boolean(requestId));
   const [loadError, setLoadError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
@@ -279,7 +325,8 @@ function RequesterChat({ requestId }) {
     [requestId]
   );
 
-  // Load the intake record once per requestId.
+  // Load the intake record once per requestId, pre-seeding software_name /
+  // scope_of_usage so we don't ask what the intake form already collected.
   // Important: do NOT gate on a "bootstrapped" ref — React Strict Mode
   // runs effect → cleanup → effect again on the same instance, which would
   // leave loading stuck forever after cancelling the first fetch.
@@ -347,6 +394,11 @@ function RequesterChat({ requestId }) {
   }
 
   function goToStep(index, updatedAnswers) {
+    // reset per-question conversational state
+    setPending(null);
+    setRevealButtons(false);
+    setParsing(false);
+    setConvo([]);
     if (index < STEPS.length) {
       setLog((l) => [...l, { from: "bot", label: STEPS[index].label, text: STEPS[index].bot }]);
       setStepIndex(index);
@@ -356,17 +408,115 @@ function RequesterChat({ requestId }) {
     }
   }
 
-  function advance(value, displayText) {
-    if (submitting) return;
-    const updated = { ...answers, [currentStep.id]: value };
-    setLog((l) => [...l, { from: "user", text: displayText }]);
+  // Commit an answer WITHOUT logging a user bubble (caller already logged it).
+  function commitAnswer(value, updatedAnswers) {
+    const updated = updatedAnswers || { ...answers, [currentStep.id]: value };
     setAnswers(updated);
     setTimeout(() => goToStep(findNextIndex(stepIndex, updated), updated), 260);
   }
 
-  function submitText() {
+  function advance(value, displayText) {
+    if (submitting) return;
+    setLog((l) => [...l, { from: "user", text: displayText }]);
+    commitAnswer(value);
+  }
+
+  // --- Conversational path (Bedrock parsing + clarification cascade) --------
+  // Used for choice questions the parser understands. The requester types a
+  // plain-English answer; we parse it to a fixed option with a confidence, then
+  // either confirm, or fall back to the option buttons.
+  const isConversational =
+    currentStep.type === "choice" && PARSEABLE.has(currentStep.id);
+
+  // Run one conversational turn given the updated history for this question.
+  async function runTurn(history) {
+    setParsing(true);
+    setPending(null);
+    try {
+      const ctx = {
+        software_name: answers.software_name,
+        use_description: answers.use_description,
+      };
+      const r = await converseTurn(currentStep.id, currentStep.bot, history, ctx);
+      const botMsg = (r.message || "").trim() || "Could you tell me a little more?";
+      // record the assistant's turn in both the visible log and the history
+      setLog((l) => [...l, { from: "bot", label: "AI", text: botMsg }]);
+      setConvo([...history, { role: "assistant", text: botMsg }]);
+      if (r.show_options) setRevealButtons(true);
+
+      if (r.status === "resolved" && r.answer) {
+        const opt = currentStep.options.find((o) => o.value === r.answer);
+        // The model's message already asks them to confirm; show Yes/No.
+        setPending({ value: r.answer, label: opt ? opt.label : r.answer });
+      }
+    } catch (e) {
+      setLog((l) => [
+        ...l,
+        { from: "bot", label: "AI", text: "I'm having trouble reaching the assistant right now — you can choose an option below." },
+      ]);
+      setRevealButtons(true);
+    } finally {
+      setParsing(false);
+    }
+  }
+
+  async function submitFreeText() {
+    const text = textInput.trim();
+    if (!text || parsing) return;
+    setLog((l) => [...l, { from: "user", text }]);
+    setTextInput("");
+    const history = [...convo, { role: "user", text }];
+    setConvo(history);
+    await runTurn(history);
+  }
+
+  function confirmYes() {
+    if (!pending) return;
+    setLog((l) => [...l, { from: "user", text: "Yes, that's right" }]);
+    const value = pending.value;
+    setPending(null);
+    commitAnswer(value);
+  }
+
+  // "No" doesn't dump to buttons — it keeps the conversation going.
+  async function confirmNo() {
+    setPending(null);
+    const text = "No, that's not quite it";
+    setLog((l) => [...l, { from: "user", text }]);
+    const history = [...convo, { role: "user", text }];
+    setConvo(history);
+    await runTurn(history);
+  }
+
+  async function submitText() {
     const trimmed = textInput.trim();
-    if (!trimmed) return;
+    if (!trimmed || parsing) return;
+    // Open-text questions that get a confusion check before we accept the answer.
+    if (ASSISTED_TEXT.has(currentStep.id)) {
+      setLog((l) => [...l, { from: "user", text: trimmed }]);
+      setTextInput("");
+      setParsing(true);
+      try {
+        const ctx = {
+          software_name: answers.software_name,
+          vendor_website: answers.vendor_website,
+        };
+        const r = await assistText(currentStep.id, currentStep.bot, trimmed, ctx);
+        if (r.is_answer) {
+          commitAnswer(trimmed);
+        } else {
+          setLog((l) => [
+            ...l,
+            { from: "bot", label: "AI", text: r.message || "Could you tell me a bit more?" },
+          ]);
+        }
+      } catch (e) {
+        commitAnswer(trimmed); // fail open: never wedge the form
+      } finally {
+        setParsing(false);
+      }
+      return;
+    }
     advance(trimmed, trimmed);
     setTextInput("");
   }
@@ -502,7 +652,52 @@ function RequesterChat({ requestId }) {
             </button>
           </div>
         ) : !done && currentStep ? (
-          currentStep.type === "choice" ? (
+          pending ? (
+            <div style={styles.choiceList}>
+              <button style={styles.choiceRow} onClick={confirmYes}>
+                <span>Yes, that's right</span>
+                <span style={styles.choiceMark}>&rarr;</span>
+              </button>
+              <button style={styles.choiceRow} onClick={confirmNo}>
+                <span>No, let me choose</span>
+                <span style={styles.choiceMark}>&rarr;</span>
+              </button>
+            </div>
+          ) : isConversational ? (
+            <div style={styles.multiWrap}>
+              <div style={styles.textRow}>
+                <input
+                  style={styles.textField}
+                  value={textInput}
+                  onChange={(e) => setTextInput(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && submitFreeText()}
+                  placeholder={parsing ? "Thinking…" : "Answer in your own words…"}
+                  disabled={parsing}
+                  autoFocus
+                />
+                <button style={styles.textSubmit} onClick={submitFreeText} disabled={parsing}>
+                  {parsing ? "…" : "Send"}
+                </button>
+              </div>
+              {revealButtons && (
+                <React.Fragment>
+                  <div style={styles.orChoose}>or choose one</div>
+                  <div style={styles.choiceList}>
+                    {currentStep.options.map((opt) => (
+                      <button
+                        key={opt.value}
+                        style={styles.choiceRow}
+                        onClick={() => advance(opt.value, opt.label)}
+                      >
+                        <span>{opt.label}</span>
+                        <span style={styles.choiceMark}>&rarr;</span>
+                      </button>
+                    ))}
+                  </div>
+                </React.Fragment>
+              )}
+            </div>
+          ) : currentStep.type === "choice" ? (
             <div style={styles.choiceList}>
               {currentStep.options.map((opt) => (
                 <button
@@ -553,11 +748,12 @@ function RequesterChat({ requestId }) {
                 value={textInput}
                 onChange={(e) => setTextInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && submitText()}
-                placeholder={currentStep.placeholder}
+                placeholder={parsing ? "Thinking…" : currentStep.placeholder}
+                disabled={parsing}
                 autoFocus
               />
-              <button style={styles.textSubmit} onClick={submitText}>
-                Enter
+              <button style={styles.textSubmit} onClick={submitText} disabled={parsing}>
+                {parsing ? "…" : "Enter"}
               </button>
             </div>
           )
@@ -612,70 +808,69 @@ const styles = {
     color: "#fff",
   },
   ticketRow: {
-    marginTop: "3px",
     fontFamily: "'IBM Plex Mono', monospace",
-    fontSize: "11.5px",
-    color: "var(--stone-light)",
+    fontSize: "11px",
+    color: "rgba(255,255,255,0.6)",
+    marginTop: "2px",
   },
   dotsWrap: {
     display: "flex",
     alignItems: "center",
-    padding: "18px 28px 0",
+    padding: "16px 28px 0",
   },
-  dotUnit: { display: "flex", alignItems: "center", flex: 1 },
+  dotUnit: {
+    display: "flex",
+    alignItems: "center",
+    flex: 1,
+  },
   dot: {
     width: "9px",
     height: "9px",
     borderRadius: "50%",
-    border: "1.5px solid var(--line)",
+    border: "2px solid var(--line)",
     flexShrink: 0,
-    transition: "background 0.25s ease, border-color 0.25s ease",
   },
   dotLine: {
+    height: "2px",
     flex: 1,
-    height: "1.5px",
-    marginLeft: "2px",
-    marginRight: "2px",
     background: "var(--line)",
-    transition: "background 0.25s ease",
   },
   stepCaption: {
-    padding: "8px 28px 18px",
     fontFamily: "'IBM Plex Mono', monospace",
-    fontSize: "11px",
+    fontSize: "10.5px",
+    letterSpacing: "0.06em",
+    textTransform: "uppercase",
     color: "var(--stone)",
-    letterSpacing: "0.02em",
+    padding: "8px 28px 14px",
   },
   log: {
-    padding: "0 28px",
-    maxHeight: "420px",
+    maxHeight: "360px",
     overflowY: "auto",
+    padding: "16px 28px",
     display: "flex",
     flexDirection: "column",
-    gap: "18px",
-    paddingBottom: "22px",
-    paddingTop: "18px",
+    gap: "16px",
   },
   botEntry: {
     display: "flex",
-    gap: "12px",
+    gap: "10px",
   },
   botRule: {
-    width: "2.5px",
-    background: "var(--red)",
+    width: "3px",
     borderRadius: "2px",
+    background: "var(--red)",
     flexShrink: 0,
   },
   botLabel: {
     fontFamily: "'IBM Plex Mono', monospace",
     fontSize: "10px",
-    letterSpacing: "0.08em",
+    letterSpacing: "0.06em",
     textTransform: "uppercase",
-    color: "var(--red)",
-    marginBottom: "4px",
+    color: "var(--stone)",
+    marginBottom: "3px",
   },
   botText: {
-    fontSize: "15px",
+    fontSize: "14.5px",
     lineHeight: 1.5,
     color: "var(--ink)",
   },
@@ -684,18 +879,18 @@ const styles = {
     justifyContent: "flex-end",
   },
   userEntry: {
-    fontFamily: "'IBM Plex Mono', monospace",
-    fontSize: "13px",
-    color: "var(--ink)",
-    background: "var(--paper-alt)",
-    border: "1px solid var(--line)",
-    padding: "6px 12px",
+    background: "var(--ink)",
+    color: "#fff",
+    padding: "9px 14px",
+    borderRadius: "10px 10px 2px 10px",
+    fontSize: "14px",
     maxWidth: "78%",
+    lineHeight: 1.4,
   },
   choiceList: {
-    borderTop: "1px solid var(--line)",
     display: "flex",
     flexDirection: "column",
+    borderTop: "1px solid var(--line)",
   },
   choiceRow: {
     display: "flex",
@@ -710,49 +905,58 @@ const styles = {
     color: "var(--ink)",
     cursor: "pointer",
     textAlign: "left",
-    transition: "border-left-color 0.15s ease, background 0.15s ease",
-    fontFamily: "inherit",
+    transition: "border-color 0.15s ease",
   },
   choiceMark: {
     color: "var(--red)",
     fontSize: "14px",
-    opacity: 0.7,
   },
-  multiWrap: { display: "flex", flexDirection: "column" },
+  multiWrap: {
+    borderTop: "1px solid var(--line)",
+  },
   textRow: {
     display: "flex",
-    alignItems: "center",
-    gap: "14px",
-    padding: "18px 28px 24px",
+    gap: "10px",
+    padding: "16px 28px",
     borderTop: "1px solid var(--line)",
   },
   textField: {
     flex: 1,
-    border: "none",
-    borderBottom: "1.5px solid var(--stone-light)",
-    background: "transparent",
-    fontSize: "15px",
-    padding: "6px 2px",
-    fontFamily: "'IBM Plex Sans', sans-serif",
-    color: "var(--ink)",
+    padding: "10px 14px",
+    borderRadius: "8px",
+    border: "1.5px solid var(--line)",
+    fontSize: "14px",
+    outline: "none",
+    boxSizing: "border-box",
+    fontFamily: "inherit",
   },
   textSubmit: {
-    border: "1px solid var(--ink)",
+    padding: "10px 18px",
+    borderRadius: "8px",
+    border: "none",
     background: "var(--ink)",
     color: "#fff",
-    fontSize: "12.5px",
-    letterSpacing: "0.04em",
-    padding: "9px 16px",
+    fontWeight: 700,
+    fontSize: "13px",
     cursor: "pointer",
-    fontFamily: "'IBM Plex Mono', monospace",
   },
   footer: {
-    padding: "16px 28px 22px",
-    borderTop: "1px solid var(--line)",
+    padding: "22px 28px",
     fontFamily: "'IBM Plex Mono', monospace",
-    fontSize: "11px",
+    fontSize: "12px",
     color: "var(--stone)",
     textAlign: "center",
+    borderTop: "1px solid var(--line)",
+    whiteSpace: "pre-wrap",
+  },
+  orChoose: {
+    padding: "14px 28px 6px",
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "10.5px",
+    letterSpacing: "0.06em",
+    textTransform: "uppercase",
+    color: "var(--stone)",
+    borderTop: "1px solid var(--line)",
   },
   errorWrap: {
     padding: "16px 28px 22px",

@@ -1,0 +1,7 @@
+# Internal SDSU historical data (labeled_full.json / test_set_*.json) — never
+# commit to the public repo. Regenerate locally from the private ServiceNow
+# export (see README).
+*.json
+!package.json
+# ...but the public SDSU catalog snapshot is safe and required by the matcher.
+!sdsu_catalog.json

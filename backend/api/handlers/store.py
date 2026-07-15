@@ -189,6 +189,20 @@ def _stub_compute_flags(it_review: dict, scope_of_usage: str | None = None) -> d
         else "No campus system integration reported"
     )
 
+    # AI / Automated Decision System tracking (California AB 302). ai_flag marks
+    # any AI-enabled software; the high-risk ADS subset (used for decisions about
+    # people) is what goes on the state inventory, called out in the reason.
+    # NOTE for Person 4: mirror this in the real rules_engine.compute_flags().
+    # it_review carries these as real booleans (see frontend/src/itReview.js),
+    # not the raw "yes"/"no" chat answers.
+    ai_flag = bool(it_review.get("ai_capabilities"))
+    if it_review.get("ai_automated_decisions"):
+        ai_reason = "AI-enabled automated decision system — California ADS inventory (AB 302)"
+    elif ai_flag:
+        ai_reason = "AI-enabled software"
+    else:
+        ai_reason = "No AI capabilities reported"
+
     return {
         "ati_flag": ati_flag,
         "ati_flag_reason": ati_reason,
@@ -196,5 +210,7 @@ def _stub_compute_flags(it_review: dict, scope_of_usage: str | None = None) -> d
         "security_flag_reason": security_reason,
         "integration_flag": integration_flag,
         "integration_flag_reason": integration_reason,
+        "ai_flag": ai_flag,
+        "ai_flag_reason": ai_reason,
         "risk_level": risk_level,
     }

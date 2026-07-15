@@ -63,3 +63,19 @@ export async function patchAdmin(requestId, payload) {
     body: JSON.stringify(payload),
   });
 }
+
+/**
+ * POST /chatbot/match-software — fuzzy/semantic match of a requested software
+ * name against the SDSU catalog, plus approved-alternative suggestions.
+ * Returns {status, matched_name, match_confidence, alternatives:[{name,why}], reasoning}.
+ */
+export async function matchSoftware(softwareName, useDescription, catalog) {
+  return request("/chatbot/match-software", {
+    method: "POST",
+    body: JSON.stringify({
+      software_name: softwareName,
+      use_description: useDescription || undefined,
+      catalog,
+    }),
+  });
+}

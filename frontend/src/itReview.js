@@ -75,6 +75,15 @@ export function answersToItReview(answers) {
   const privacyRaw = answers.vendor_privacy_policy_url;
   const vendor_privacy_policy_url = isNotSureText(privacyRaw) ? null : String(privacyRaw).trim();
 
+  // AI / Automated Decision System tracking (California AB 302). Not part of
+  // the original frozen schema -- added so ai_flag (backend store.py) has
+  // something to compute from instead of silently losing these answers.
+  const ai_capabilities = answers.ai_capabilities === "yes";
+  const ai_use_description = ai_capabilities && answers.ai_use_description
+    ? String(answers.ai_use_description).trim()
+    : null;
+  const ai_automated_decisions = answers.ai_automated_decisions === "yes";
+
   return {
     estimated_users: answers.estimated_users || null,
     interaction_method,
@@ -94,5 +103,8 @@ export function answersToItReview(answers) {
     compliance_requirements,
     compliance_note,
     vendor_privacy_policy_url,
+    ai_capabilities,
+    ai_use_description,
+    ai_automated_decisions,
   };
 }
