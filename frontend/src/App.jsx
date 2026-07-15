@@ -1,7 +1,6 @@
+import React from "react";
 import RequesterChat from "./RequesterChat.jsx";
 
-function App() {
+export default function App() {
   return <RequesterChat />;
 }
-
-export default App;

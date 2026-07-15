@@ -1,11 +1,43 @@
-html, body {
+:root {
+  --ink: #1A1A1A;
+  --red: #C8102E;
+  --red-dark: #94001C;
+  --paper: #FAFAFA;
+  --paper-alt: #EFEFEF;
+  --line: #E4E4E4;
+  --stone: #6B6B6B;
+  --stone-light: #B3B3B3;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
   margin: 0;
   padding: 0;
-  background: #F2F2F2;
-  font-family: 'Segoe UI', Arial, sans-serif;
-  height: 100%;
+  min-height: 100%;
+  background:
+    radial-gradient(circle at 1px 1px, rgba(0, 0, 0, 0.035) 1px, transparent 0) 0 0/14px 14px,
+    var(--paper);
+  font-family: "IBM Plex Sans", sans-serif;
+  color: var(--ink);
 }
 
 #root {
   min-height: 100vh;
+}
+
+::selection {
+  background: var(--red);
+  color: #fff;
+}
+
+button {
+  font-family: inherit;
+}
+
+input:focus {
+  outline: none;
 }
