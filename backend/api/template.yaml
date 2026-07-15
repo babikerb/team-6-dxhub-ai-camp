@@ -1,0 +1,118 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  SoftwareRequests API - 5 endpoints per Implementation_Plan.md API Contract.
+  Not deployed yet -- this is ready for `sam build && sam deploy --guided`
+  once AWS credentials are available. Handlers are unchanged from local dev
+  (see local_server.py); only this file and store.py's data access differ
+  between local and deployed.
+
+Parameters:
+  SoftwareRequestsTableName:
+    Type: String
+    Description: Name of the existing DynamoDB table (owned by the teammate setting up DynamoDB).
+    Default: SoftwareRequests
+
+Globals:
+  Function:
+    Runtime: python3.13
+    Timeout: 10
+    MemorySize: 256
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref SoftwareRequestsTableName
+
+Resources:
+  SoftwareRequestsApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: dev
+      Cors:
+        AllowMethods: "'GET,POST,PATCH,OPTIONS'"
+        AllowHeaders: "'Content-Type'"
+        AllowOrigin: "'*'"
+
+  CreateRequestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: handlers.create_request.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SoftwareRequestsTableName
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SoftwareRequestsApi
+            Path: /requests
+            Method: POST
+
+  GetRequestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: handlers.get_request.handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref SoftwareRequestsTableName
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SoftwareRequestsApi
+            Path: /requests/{id}
+            Method: GET
+
+  ListRequestsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: handlers.list_requests.handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref SoftwareRequestsTableName
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SoftwareRequestsApi
+            Path: /requests
+            Method: GET
+
+  ChatbotPatchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: handlers.chatbot_patch.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SoftwareRequestsTableName
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SoftwareRequestsApi
+            Path: /requests/{id}/chatbot
+            Method: PATCH
+
+  AdminPatchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: handlers.admin_patch.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SoftwareRequestsTableName
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SoftwareRequestsApi
+            Path: /requests/{id}/admin
+            Method: PATCH
+
+Outputs:
+  ApiBaseUrl:
+    Description: Base URL for the deployed API
+    Value: !Sub "https://${SoftwareRequestsApi}.execute-api.${AWS::Region}.amazonaws.com/dev/"
