@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from handlers import (
     admin_patch,
+    chatbot_converse,
     chatbot_parse,
     chatbot_patch,
     create_request,
@@ -91,6 +92,12 @@ async def admin_patch_route(request: Request, request_id: str):
 async def chatbot_parse_route(request: Request):
     event = await _to_event(request)
     return _from_lambda_response(chatbot_parse.handler(event))
+
+
+@app.post("/chatbot/converse")
+async def chatbot_converse_route(request: Request):
+    event = await _to_event(request)
+    return _from_lambda_response(chatbot_converse.handler(event))
 
 
 @app.get("/health")

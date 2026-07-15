@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
-import { parseReply, PARSEABLE } from "./chatbotParse.js";
+import { converseTurn, PARSEABLE } from "./chatbotParse.js";
 
 // -----------------------------------------------------------------
 // MASTER QUESTION LIST (Part B)
@@ -288,7 +288,8 @@ function RequesterChat({ requestId }) {
   // Conversational (Bedrock) state for parseable choice questions:
   const [parsing, setParsing] = useState(false);       // waiting on the model
   const [pending, setPending] = useState(null);        // {value,label} awaiting confirm
-  const [revealButtons, setRevealButtons] = useState(false); // fell back to options
+  const [revealButtons, setRevealButtons] = useState(false); // model laid out options
+  const [convo, setConvo] = useState([]);              // per-question turn history
   const scrollRef = useRef(null);
 
   useEffect(() => {
@@ -314,6 +315,7 @@ function RequesterChat({ requestId }) {
     setPending(null);
     setRevealButtons(false);
     setParsing(false);
+    setConvo([]);
     if (index < STEPS.length) {
       setLog((l) => [...l, { from: "bot", label: STEPS[index].label, text: STEPS[index].bot }]);
       setStepIndex(index);
@@ -353,46 +355,46 @@ function RequesterChat({ requestId }) {
   const isConversational =
     currentStep.type === "choice" && PARSEABLE.has(currentStep.id);
 
-  async function submitFreeText() {
-    const text = textInput.trim();
-    if (!text || parsing) return;
-    setLog((l) => [...l, { from: "user", text }]);
-    setTextInput("");
+  // Run one conversational turn given the updated history for this question.
+  async function runTurn(history) {
     setParsing(true);
+    setPending(null);
     try {
       const ctx = {
         software_name: answers.software_name,
         use_description: answers.use_description,
       };
-      const r = await parseReply(currentStep.id, text, ctx);
-      const opt = currentStep.options.find((o) => o.value === r.answer);
-      const why = (r.reasoning || "").trim();
-      if (r.cascade_action === "confirm" && opt) {
-        setLog((l) => [
-          ...l,
-          { from: "bot", label: "AI", text: `${why}\n\nSounds like: “${opt.label}.” Is that right?` },
-        ]);
-        setPending({ value: r.answer, label: opt.label });
-      } else {
-        const lead =
-          r.answer === "unsure" || !opt
-            ? "I couldn't tell for sure from that."
-            : why;
-        setLog((l) => [
-          ...l,
-          { from: "bot", label: "AI", text: `${lead}\n\nCould you pick the closest option below?` },
-        ]);
-        setRevealButtons(true);
+      const r = await converseTurn(currentStep.id, currentStep.bot, history, ctx);
+      const botMsg = (r.message || "").trim() || "Could you tell me a little more?";
+      // record the assistant's turn in both the visible log and the history
+      setLog((l) => [...l, { from: "bot", label: "AI", text: botMsg }]);
+      setConvo([...history, { role: "assistant", text: botMsg }]);
+      if (r.show_options) setRevealButtons(true);
+
+      if (r.status === "resolved" && r.answer) {
+        const opt = currentStep.options.find((o) => o.value === r.answer);
+        // The model's message already asks them to confirm; show Yes/No.
+        setPending({ value: r.answer, label: opt ? opt.label : r.answer });
       }
     } catch (e) {
       setLog((l) => [
         ...l,
-        { from: "bot", label: "AI", text: "I couldn't reach the AI service — please choose an option below." },
+        { from: "bot", label: "AI", text: "I'm having trouble reaching the assistant right now — you can choose an option below." },
       ]);
       setRevealButtons(true);
     } finally {
       setParsing(false);
     }
+  }
+
+  async function submitFreeText() {
+    const text = textInput.trim();
+    if (!text || parsing) return;
+    setLog((l) => [...l, { from: "user", text }]);
+    setTextInput("");
+    const history = [...convo, { role: "user", text }];
+    setConvo(history);
+    await runTurn(history);
   }
 
   function confirmYes() {
@@ -403,14 +405,14 @@ function RequesterChat({ requestId }) {
     commitAnswer(value);
   }
 
-  function confirmNo() {
+  // "No" doesn't dump to buttons — it keeps the conversation going.
+  async function confirmNo() {
     setPending(null);
-    setRevealButtons(true);
-    setLog((l) => [
-      ...l,
-      { from: "user", text: "Not quite" },
-      { from: "bot", label: "AI", text: "No problem — which of these fits best?" },
-    ]);
+    const text = "No, that's not quite it";
+    setLog((l) => [...l, { from: "user", text }]);
+    const history = [...convo, { role: "user", text }];
+    setConvo(history);
+    await runTurn(history);
   }
 
   function submitText() {
@@ -522,7 +524,7 @@ function RequesterChat({ requestId }) {
                   value={textInput}
                   onChange={(e) => setTextInput(e.target.value)}
                   onKeyDown={(e) => e.key === "Enter" && submitFreeText()}
-                  placeholder={parsing ? "Reading your answer…" : "Answer in your own words…"}
+                  placeholder={parsing ? "Thinking…" : "Answer in your own words…"}
                   disabled={parsing}
                   autoFocus
                 />
@@ -530,19 +532,23 @@ function RequesterChat({ requestId }) {
                   {parsing ? "…" : "Send"}
                 </button>
               </div>
-              <div style={styles.orChoose}>or choose an option</div>
-              <div style={styles.choiceList}>
-                {currentStep.options.map((opt) => (
-                  <button
-                    key={opt.value}
-                    style={styles.choiceRow}
-                    onClick={() => advance(opt.value, opt.label)}
-                  >
-                    <span>{opt.label}</span>
-                    <span style={styles.choiceMark}>&rarr;</span>
-                  </button>
-                ))}
-              </div>
+              {revealButtons && (
+                <React.Fragment>
+                  <div style={styles.orChoose}>or choose one</div>
+                  <div style={styles.choiceList}>
+                    {currentStep.options.map((opt) => (
+                      <button
+                        key={opt.value}
+                        style={styles.choiceRow}
+                        onClick={() => advance(opt.value, opt.label)}
+                      >
+                        <span>{opt.label}</span>
+                        <span style={styles.choiceMark}>&rarr;</span>
+                      </button>
+                    ))}
+                  </div>
+                </React.Fragment>
+              )}
             </div>
           ) : currentStep.type === "choice" ? (
             <div style={styles.choiceList}>

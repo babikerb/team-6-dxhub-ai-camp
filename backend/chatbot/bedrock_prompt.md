@@ -167,3 +167,38 @@ Stop taking free text; show the four options each with one real example:
 
 If the requester still can't answer after Layer 2, record `"unsure"` with a note
 of what they actually said. That is a legitimate outcome, not a failure.
+
+---
+
+## Multi-turn clarification loop (converse endpoint)
+
+The single-shot parse above is used by the eval harness. The live chatbot uses a
+**multi-turn** loop (`converse()` in parse.py, `POST /chatbot/converse`) that
+keeps working with a confused requester instead of dumping them to buttons.
+Each turn receives the full back-and-forth for the current question and returns:
+
+```json
+{ "status": "resolved" | "clarify",
+  "answer": "<enum|null>",
+  "confidence": 0.0,
+  "message": "what to say to the requester next",
+  "show_options": false }
+```
+
+Rules the model follows (also enforced in code as a backstop):
+- **Never accept a wishy-washy answer** ("maybe", "I think so", "I don't know",
+  "not sure") as final. Return `status:"clarify"` with ONE concrete, jargon-free
+  follow-up that moves toward a single option.
+- **Resolve** (`status:"resolved"`) only when genuinely confident or able to
+  correctly infer the answer for them; the `message` then states the pick and
+  asks them to confirm it. The UI shows Yes / No — "No" continues the loop, it
+  does not dump to buttons.
+- **Escalate after ~2 struggles:** set `show_options:true`, first gently check
+  the question makes sense to them, then explain each option in plain English so
+  they can just pick. (Code forces `show_options` once the requester has given
+  ≥2 unresolved answers, regardless of the model.)
+- **If they keep saying "I don't know":** check understanding first, then lay
+  the options out plainly.
+- **Never shut the conversation down** — always resolve or ask a constructive
+  next question; never volunteer a terminal "unsure" that stops progress. The
+  requester can still click an option once they're shown.

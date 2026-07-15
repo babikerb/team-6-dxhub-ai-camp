@@ -81,6 +81,35 @@ QUESTIONS = {
 }
 
 
+# Plain-English explanation of each option, used when the model needs to "lay
+# out the answers" for a confused requester (see converse() escalation rules).
+OPTION_GUIDE = {
+    "software_category": [
+        ("cloud", "Something you log into online — a website or app, nothing to install (like Canva, Zoom, Kahoot)."),
+        ("onprem-datacenter", "Campus IT installs and runs it on a server for lots of people (like a backup or database system)."),
+        ("onprem-local", "You install it yourself on your own computer (often lab, instrument, or scientific software)."),
+        ("addon", "A small add-on inside a program you already use (a browser extension, a Gmail or Acrobat add-in)."),
+    ],
+    "shares_data_with_campus_system": [
+        ("yes", "It connects to another SDSU system — like Canvas, Oracle, or PeopleSoft/mySDSU — to send or pull information."),
+        ("no", "It works on its own and doesn't exchange data with other campus systems."),
+    ],
+    "sso_capable": [
+        ("yes", "You log in with your regular SDSUid — the same login as other campus systems."),
+        ("no", "It has its own separate username and password, just for this tool."),
+    ],
+    "estimated_users": [
+        ("1-30", "A small group — up to about 30 people."),
+        ("30-100", "A medium group — roughly 30 to 100 people."),
+        ("100+", "A large group — more than 100 people."),
+    ],
+}
+# The nine sensitive-data questions are all simple yes/no.
+for _q in ["la_health", "la_pii", "la_payment", "la_lawenforcement",
+           "lb_coursework", "lb_employee", "lb_budget", "lb_research", "lb_legal"]:
+    OPTION_GUIDE[_q] = [("yes", "Yes, it does."), ("no", "No, it doesn't.")]
+
+
 def _load_prompt_section(section: str) -> str:
     """Pull the system preamble + the relevant per-question block from the md."""
     text = _PROMPT_FILE.read_text(encoding="utf-8")
@@ -263,6 +292,191 @@ def parse_answer(question_id, reply, intake_context=None, mode=None):
     if active == "mock":
         return _call_mock(question_id, reply, intake_context or {})
     return _call_bedrock(question_id, reply, intake_context or {})
+
+
+# ---- Conversational multi-turn engine --------------------------------------
+# Escalation rules the model follows when clarifying. Kept here (not the .md)
+# because they govern the turn logic; bedrock_prompt.md documents them too.
+_CONVERSE_SYSTEM = """You are a patient, friendly assistant helping a non-technical San Diego State
+University faculty or staff member answer ONE question while requesting software.
+The requester may be confused. Your goal is to gently work with them until you
+can map their situation to one of the fixed answer options — or until you can
+correctly infer the answer for them from what they've said.
+
+Hard rules:
+- NEVER accept a vague or non-committal reply ("maybe", "I think so", "I guess",
+  "I don't know", "not sure", "kind of") as a final answer. Ask a specific,
+  concrete follow-up that moves toward exactly one option.
+- Only set status "resolved" when you are genuinely confident, OR when the
+  conversation gives you enough to correctly pick the option FOR them. When you
+  resolve, your message must state your pick and ask them to confirm it
+  ("It sounds like ___ — is that right?").
+- If you're not there yet, set status "clarify" and ask ONE short, plain-English
+  follow-up. Do not use jargon (cloud, on-prem, SSO, Level 1/2, FERPA, HIPAA) —
+  translate everything into everyday language and concrete examples.
+- Escalate with effort:
+    * After the requester has given about TWO unhelpful answers, set
+      show_options to true and briefly explain each option in plain English
+      inside your message, then invite them to pick or describe more.
+    * If they express confusion or keep saying "I don't know", FIRST ask
+      whether the question itself makes sense to them (one short check), THEN
+      lay the options out plainly (show_options true).
+- NEVER shut the conversation down. Do not give up, and do not return "unsure"
+  as a way to end it. Always either resolve or ask a constructive next question.
+  There is always a next step you can take with them."""
+
+
+def _converse_tool(enum):
+    answerable = [e for e in enum if e != "unsure"]
+    return {
+        "name": "record_turn",
+        "description": "Decide the next conversational move for this question.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["resolved", "clarify"]},
+                "answer": {"type": ["string", "null"], "enum": answerable + [None]},
+                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                "message": {
+                    "type": "string",
+                    "description": "What to say to the requester next — a confirmation if resolved, otherwise a plain-English follow-up question.",
+                },
+                "show_options": {
+                    "type": "boolean",
+                    "description": "True when the message lays out the options and the clickable choices should be shown.",
+                },
+            },
+            "required": ["status", "confidence", "message", "show_options"],
+        },
+    }
+
+
+def _options_text(question_id):
+    guide = OPTION_GUIDE.get(question_id, [])
+    return "\n".join(f'- "{val}": {plain}' for val, plain in guide)
+
+
+def converse(question_id, question_text, history, intake_context=None):
+    """One turn of the multi-turn clarification loop.
+
+    question_id    : key in QUESTIONS
+    question_text  : the question as shown to the requester
+    history        : list of {"role": "user"|"assistant", "text": ...} for THIS
+                     question only (oldest first; last entry is the newest user reply)
+    intake_context : optional dict from the intake form
+
+    Returns {status, answer, confidence, message, show_options}.
+    """
+    if question_id not in QUESTIONS:
+        raise ValueError(f"Unknown question_id: {question_id}")
+    q = QUESTIONS[question_id]
+
+    if (MODE or "").lower() == "mock":
+        return _converse_mock(question_id, question_text, history)
+
+    import boto3
+
+    _, guidance = _load_prompt_section(q["prompt_section"])
+    user_attempts = sum(1 for h in history if h.get("role") == "user")
+    ctx = ""
+    if intake_context:
+        ctx = "What the intake form already told us:\n" + "\n".join(
+            f"- {k}: {v}" for k, v in intake_context.items() if v
+        )
+    transcript = "\n".join(
+        f"{'Requester' if h.get('role') == 'user' else 'You'}: {h.get('text','')}"
+        for h in history
+    )
+    escalation = ""
+    if user_attempts >= 2:
+        escalation = (
+            "IMPORTANT: they have now struggled TWICE. Unless their latest reply "
+            "clearly resolves the answer, you MUST set show_options to true and, in "
+            "your message, first gently check that the question makes sense to them, "
+            "then explain each option in plain English so they can simply pick one. "
+            "Do not just ask another open-ended question."
+        )
+    user = f"""The question the requester is answering: "{question_text}"
+
+The only valid answers, in plain English:
+{_options_text(question_id)}
+
+Extra guidance for mapping replies to these answers:
+{guidance}
+
+{ctx}
+
+Conversation so far on this question:
+{transcript}
+
+The requester has given {user_attempts} answer(s) so far on this question.
+Decide the next move and call record_turn. Remember: never accept a wishy-washy
+answer as final, keep working with them, and escalate to explaining the options
+plainly if they've struggled about twice.
+{escalation}"""
+
+    client = boto3.client("bedrock-runtime", region_name=REGION)
+    body = {
+        "anthropic_version": "bedrock-2023-05-31",
+        "max_tokens": 600,
+        "system": _CONVERSE_SYSTEM,
+        "messages": [{"role": "user", "content": user}],
+        "tools": [_converse_tool(q["enum"])],
+        "tool_choice": {"type": "tool", "name": "record_turn"},
+    }
+    resp = client.invoke_model(modelId=MODEL_ID, body=json.dumps(body))
+    payload = json.loads(resp["body"].read())
+    for blk in payload.get("content", []):
+        if blk.get("type") == "tool_use" and blk.get("name") == "record_turn":
+            return _normalize_turn(blk["input"], q, user_attempts)
+    return {"status": "clarify", "answer": None, "confidence": 0.0,
+            "message": "Sorry — could you tell me a bit more about that?",
+            "show_options": user_attempts >= 2}
+
+
+def _normalize_turn(raw, q, user_attempts=0):
+    status = raw.get("status")
+    answer = raw.get("answer")
+    if status == "resolved" and answer not in q["enum"]:
+        status = "clarify"  # can't resolve to a non-option
+        answer = None
+    status = status if status in ("resolved", "clarify") else "clarify"
+    try:
+        conf = float(raw.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        conf = 0.0
+    # Backstop Alvin's rule: after ~2 struggles with no resolution, always
+    # surface the options so the requester can just pick one.
+    show_options = bool(raw.get("show_options", False))
+    if status == "clarify" and user_attempts >= 2:
+        show_options = True
+    return {
+        "status": status,
+        "answer": answer if answer in q["enum"] else None,
+        "confidence": max(0.0, min(1.0, conf)),
+        "message": str(raw.get("message", "")).strip()[:600]
+        or "Could you tell me a little more?",
+        "show_options": show_options,
+    }
+
+
+def _converse_mock(question_id, question_text, history):
+    """Offline stand-in: use the single-shot heuristic, phrased as a turn."""
+    last = next((h["text"] for h in reversed(history) if h.get("role") == "user"), "")
+    r = _heuristic(question_id, last)
+    ans = r["answer"]
+    attempts = sum(1 for h in history if h.get("role") == "user")
+    if r["confidence"] >= CONFIRM_THRESHOLD and isinstance(ans, str) and ans != "unsure":
+        label = dict(OPTION_GUIDE.get(question_id, [])).get(ans, ans)
+        return {"status": "resolved", "answer": ans, "confidence": r["confidence"],
+                "message": f"It sounds like: {label} Is that right?", "show_options": False}
+    show = attempts >= 2
+    opts = "\n".join(f"• {p}" for _, p in OPTION_GUIDE.get(question_id, []))
+    msg = ("No worries — let me put the choices in plain terms:\n" + opts +
+           "\nWhich of these sounds closest?") if show else \
+          "Got it — can you tell me a bit more so I can point you to the right option?"
+    return {"status": "clarify", "answer": None, "confidence": r["confidence"],
+            "message": msg, "show_options": show}
 
 
 def next_cascade_action(result):

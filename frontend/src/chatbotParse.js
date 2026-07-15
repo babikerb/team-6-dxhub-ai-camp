@@ -31,3 +31,23 @@ export async function parseReply(questionId, reply, intakeContext = {}) {
   }
   return res.json(); // { answer, confidence, reasoning, quote, cascade_action }
 }
+
+// One turn of the multi-turn clarification loop. `history` is the full
+// back-and-forth for the current question: [{role:"user"|"assistant", text}].
+export async function converseTurn(questionId, questionText, history, intakeContext = {}) {
+  const res = await fetch(`${API_BASE}/chatbot/converse`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      question_id: questionId,
+      question_text: questionText,
+      history,
+      intake_context: intakeContext,
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `Converse failed (${res.status})`);
+  }
+  return res.json(); // { status, answer, confidence, message, show_options }
+}
