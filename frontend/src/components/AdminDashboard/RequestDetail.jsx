@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { patchAdmin } from "../../api.js";
 
 // ── Color tokens (matches RequesterChat.jsx palette) ──────────────────────────
 const C = {
@@ -13,6 +14,12 @@ const C = {
   mutedText: "#666",
   subtleText: "#B3B3B3",
   font: "'Segoe UI', Arial, sans-serif",
+};
+
+const DEFAULT_OVERRIDES = {
+  ati_flag: null,
+  security_flag: null,
+  integration_flag: null,
 };
 
 function riskColor(level) {
@@ -120,10 +127,16 @@ function FlagRow({ label, computedValue, computedReason, overrideValue, onToggle
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function RequestDetail({ request, onClose, onSaved }) {
-  const { requestor, it_review, flags, admin } = request;
+  const requestor = request.requestor || {};
+  const it_review = request.it_review || {};
+  const flags = request.flags || {};
+  const admin = request.admin || {};
 
   // Local override state — starts from whatever is already saved
-  const [overrides, setOverrides] = useState({ ...admin.overrides });
+  const [overrides, setOverrides] = useState({
+    ...DEFAULT_OVERRIDES,
+    ...(admin.overrides || {}),
+  });
   const [overrideReason, setOverrideReason] = useState(admin.override_reason || "");
   const [overriddenBy, setOverriddenBy] = useState(admin.overridden_by || "");
   const [adminNotes, setAdminNotes] = useState(admin.admin_notes || "");
@@ -169,40 +182,19 @@ export default function RequestDetail({ request, onClose, onSaved }) {
     setError("");
     setSaving(true);
 
+    // Backend expects top-level fields (not nested under "admin").
     const payload = {
-      admin: {
-        overrides,
-        override_reason: overrideReason.trim(),
-        overridden_by: overriddenBy.trim(),
-        admin_notes: adminNotes.trim(),
-      },
+      overrides,
+      override_reason: overrideReason.trim(),
+      overridden_by: overriddenBy.trim(),
+      admin_notes: adminNotes.trim(),
     };
 
     try {
-      // Phase 2: swap this URL for the real endpoint
-      // const res = await fetch(`/requests/${request.request_id}/admin`, {
-      //   method: "PATCH",
-      //   headers: { "Content-Type": "application/json" },
-      //   body: JSON.stringify(payload),
-      // });
-      // const updated = await res.json();
-
-      // Phase 1: simulate a successful save with mock data
-      await new Promise((r) => setTimeout(r, 400));
-      const updated = {
-        ...request,
-        admin: {
-          overrides,
-          override_reason: overrideReason.trim(),
-          overridden_by: overriddenBy.trim(),
-          admin_notes: adminNotes.trim(),
-        },
-        updated_at: new Date().toISOString(),
-      };
-
+      const updated = await patchAdmin(request.request_id, payload);
       onSaved(updated);
-    } catch {
-      setError("Save failed. Please try again.");
+    } catch (err) {
+      setError(err.message || "Save failed. Please try again.");
     } finally {
       setSaving(false);
     }
@@ -277,28 +269,28 @@ export default function RequestDetail({ request, onClose, onSaved }) {
               <span style={{ fontSize: "12px", color: C.mutedText }}>
                 Risk level:{" "}
                 <span style={{ fontWeight: 700, color: riskColor(flags.risk_level) }}>
-                  {flags.risk_level}
+                  {flags.risk_level || "Pending"}
                 </span>
               </span>
             </div>
             <FlagRow
               label="ATI Review"
-              computedValue={flags.ati_flag}
-              computedReason={flags.ati_flag_reason}
+              computedValue={flags.ati_flag === true}
+              computedReason={flags.ati_flag_reason || "Not computed yet"}
               overrideValue={overrides.ati_flag}
               onToggle={handleToggle}
             />
             <FlagRow
               label="Security Review"
-              computedValue={flags.security_flag}
-              computedReason={flags.security_flag_reason}
+              computedValue={flags.security_flag === true}
+              computedReason={flags.security_flag_reason || "Not computed yet"}
               overrideValue={overrides.security_flag}
               onToggle={handleToggle}
             />
             <FlagRow
               label="Integration Review"
-              computedValue={flags.integration_flag}
-              computedReason={flags.integration_flag_reason}
+              computedValue={flags.integration_flag === true}
+              computedReason={flags.integration_flag_reason || "Not computed yet"}
               overrideValue={overrides.integration_flag}
               onToggle={handleToggle}
             />

@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { MOCK_REQUESTS } from "./mockData.js";
+import { useState, useEffect, useCallback } from "react";
+import { listRequests } from "../../api.js";
 import RequestDetail from "./RequestDetail.jsx";
 
 // ── Color tokens (matches RequesterChat.jsx palette) ──────────────────────────
@@ -76,7 +76,6 @@ function Badge({ label, color }) {
   );
 }
 
-// ── Unique values for filter dropdowns ────────────────────────────────────────
 const ALL_STATUSES = [
   "Submitted",
   "ChatbotInProgress",
@@ -86,41 +85,75 @@ const ALL_STATUSES = [
   "Denied",
 ];
 
+function emptyFlags(flags) {
+  return flags && typeof flags === "object" ? flags : {};
+}
+
+function emptyRequestor(requestor) {
+  return requestor && typeof requestor === "object" ? requestor : {};
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function AdminDashboard() {
-  // In Phase 2 swap this for a real fetch from GET /requests
-  const [requests, setRequests] = useState(MOCK_REQUESTS);
+  const [requests, setRequests] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
 
-  // Filters
   const [filterStatus, setFilterStatus] = useState("");
-  const [filterFlag, setFilterFlag] = useState("");   // "ati" | "security" | "integration" | ""
+  const [filterFlag, setFilterFlag] = useState("");
   const [filterDept, setFilterDept] = useState("");
   const [search, setSearch] = useState("");
 
-  const departments = [...new Set(requests.map((r) => r.requestor.department))].sort();
+  const loadRequests = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await listRequests();
+      setRequests(Array.isArray(data.items) ? data.items : []);
+    } catch (err) {
+      setError(err.message || "Could not load requests.");
+      setRequests([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadRequests();
+  }, [loadRequests]);
+
+  const departments = [
+    ...new Set(
+      requests
+        .map((r) => emptyRequestor(r.requestor).department)
+        .filter(Boolean)
+    ),
+  ].sort();
 
   const filtered = requests.filter((r) => {
+    const requestor = emptyRequestor(r.requestor);
+    const flags = emptyFlags(r.flags);
+
     if (filterStatus && r.status !== filterStatus) return false;
     if (filterFlag) {
-      if (filterFlag === "ati" && !r.flags.ati_flag) return false;
-      if (filterFlag === "security" && !r.flags.security_flag) return false;
-      if (filterFlag === "integration" && !r.flags.integration_flag) return false;
+      if (filterFlag === "ati" && !flags.ati_flag) return false;
+      if (filterFlag === "security" && !flags.security_flag) return false;
+      if (filterFlag === "integration" && !flags.integration_flag) return false;
     }
-    if (filterDept && r.requestor.department !== filterDept) return false;
+    if (filterDept && requestor.department !== filterDept) return false;
     if (search) {
       const q = search.toLowerCase();
       if (
-        !r.requestor.software_name.toLowerCase().includes(q) &&
-        !r.requestor.requested_for_name.toLowerCase().includes(q) &&
-        !r.requestor.department.toLowerCase().includes(q)
+        !(requestor.software_name || "").toLowerCase().includes(q) &&
+        !(requestor.requested_for_name || "").toLowerCase().includes(q) &&
+        !(requestor.department || "").toLowerCase().includes(q)
       )
         return false;
     }
     return true;
   });
 
-  // Called by RequestDetail after a successful PATCH /requests/{id}/admin
   function handleSaved(updatedRequest) {
     setRequests((prev) =>
       prev.map((r) => (r.request_id === updatedRequest.request_id ? updatedRequest : r))
@@ -132,17 +165,24 @@ export default function AdminDashboard() {
 
   return (
     <div style={styles.page}>
-      {/* ── Header ── */}
       <div style={styles.header}>
         <div style={styles.headerBadge}>SDSU</div>
         <div>
           <div style={styles.headerTitle}>Admin Dashboard</div>
           <div style={styles.headerSubtitle}>Software Request Review</div>
         </div>
+        <button
+          type="button"
+          style={styles.refreshButton}
+          onClick={loadRequests}
+          disabled={loading}
+          aria-label="Refresh requests"
+        >
+          {loading ? "Loading…" : "Refresh"}
+        </button>
       </div>
 
       <div style={styles.body}>
-        {/* ── Filters ── */}
         <div style={styles.filterBar}>
           <input
             style={styles.searchInput}
@@ -207,12 +247,21 @@ export default function AdminDashboard() {
           )}
         </div>
 
-        {/* ── Results count ── */}
+        {error && (
+          <div style={styles.errorBanner} role="alert">
+            {error}{" "}
+            <button type="button" style={styles.retryLink} onClick={loadRequests}>
+              Retry
+            </button>
+          </div>
+        )}
+
         <div style={styles.resultCount}>
-          {filtered.length} request{filtered.length !== 1 ? "s" : ""}
+          {loading
+            ? "Loading requests…"
+            : `${filtered.length} request${filtered.length !== 1 ? "s" : ""}`}
         </div>
 
-        {/* ── Table ── */}
         <div style={styles.tableWrapper}>
           <table style={styles.table}>
             <thead>
@@ -226,59 +275,72 @@ export default function AdminDashboard() {
               </tr>
             </thead>
             <tbody>
-              {filtered.length === 0 ? (
+              {loading ? (
                 <tr>
                   <td colSpan={6} style={styles.emptyCell}>
-                    No requests match the current filters.
+                    Loading…
+                  </td>
+                </tr>
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={styles.emptyCell}>
+                    {error
+                      ? "Unable to load requests."
+                      : requests.length === 0
+                        ? "No requests yet. Submit one from the intake form."
+                        : "No requests match the current filters."}
                   </td>
                 </tr>
               ) : (
-                filtered.map((r) => (
-                  <tr
-                    key={r.request_id}
-                    style={{
-                      ...styles.tr,
-                      background:
-                        selectedId === r.request_id ? "#FFF5F7" : C.white,
-                    }}
-                    onClick={() => setSelectedId(r.request_id)}
-                  >
-                    <td style={{ ...styles.td, fontWeight: 600 }}>
-                      {r.requestor.software_name}
-                    </td>
-                    <td style={styles.td}>
-                      <div>{r.requestor.requested_for_name}</div>
-                      <div style={{ fontSize: "11px", color: C.mutedText }}>
-                        {r.requestor.requested_for_email}
-                      </div>
-                    </td>
-                    <td style={styles.td}>{r.requestor.department}</td>
-                    <td style={styles.td}>
-                      <Badge
-                        label={r.status}
-                        color={statusColor(r.status)}
-                      />
-                    </td>
-                    <td style={styles.td}>
-                      <FlagPill value={r.flags.ati_flag} label="ATI" />
-                      <FlagPill value={r.flags.security_flag} label="SEC" />
-                      <FlagPill value={r.flags.integration_flag} label="INT" />
-                    </td>
-                    <td style={styles.td}>
-                      <Badge
-                        label={r.flags.risk_level}
-                        color={riskColor(r.flags.risk_level)}
-                      />
-                    </td>
-                  </tr>
-                ))
+                filtered.map((r) => {
+                  const requestor = emptyRequestor(r.requestor);
+                  const flags = emptyFlags(r.flags);
+                  return (
+                    <tr
+                      key={r.request_id}
+                      style={{
+                        ...styles.tr,
+                        background: selectedId === r.request_id ? "#FFF5F7" : C.white,
+                      }}
+                      onClick={() => setSelectedId(r.request_id)}
+                    >
+                      <td style={{ ...styles.td, fontWeight: 600 }}>
+                        {requestor.software_name || "—"}
+                      </td>
+                      <td style={styles.td}>
+                        <div>{requestor.requested_for_name || "—"}</div>
+                        <div style={{ fontSize: "11px", color: C.mutedText }}>
+                          {requestor.requested_for_email || ""}
+                        </div>
+                      </td>
+                      <td style={styles.td}>{requestor.department || "—"}</td>
+                      <td style={styles.td}>
+                        <Badge label={r.status || "Unknown"} color={statusColor(r.status)} />
+                      </td>
+                      <td style={styles.td}>
+                        <FlagPill value={flags.ati_flag} label="ATI" />
+                        <FlagPill value={flags.security_flag} label="SEC" />
+                        <FlagPill value={flags.integration_flag} label="INT" />
+                      </td>
+                      <td style={styles.td}>
+                        {flags.risk_level ? (
+                          <Badge
+                            label={flags.risk_level}
+                            color={riskColor(flags.risk_level)}
+                          />
+                        ) : (
+                          <span style={{ color: C.subtleText, fontSize: "12px" }}>Pending</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* ── Detail panel (slide-in overlay) ── */}
       {selected && (
         <RequestDetail
           request={selected}
@@ -290,7 +352,6 @@ export default function AdminDashboard() {
   );
 }
 
-// ── Styles ────────────────────────────────────────────────────────────────────
 const styles = {
   page: {
     minHeight: "100vh",
@@ -316,6 +377,18 @@ const styles = {
   },
   headerTitle: { fontWeight: 600, fontSize: "15px" },
   headerSubtitle: { fontSize: "12px", color: C.subtleText },
+  refreshButton: {
+    marginLeft: "auto",
+    padding: "8px 14px",
+    borderRadius: "8px",
+    border: "1px solid rgba(255,255,255,0.35)",
+    background: "transparent",
+    color: C.white,
+    fontSize: "13px",
+    fontWeight: 600,
+    cursor: "pointer",
+    fontFamily: C.font,
+  },
   body: {
     padding: "24px",
     maxWidth: "1100px",
@@ -357,6 +430,25 @@ const styles = {
     fontSize: "13px",
     fontWeight: 600,
     cursor: "pointer",
+    fontFamily: C.font,
+  },
+  errorBanner: {
+    marginBottom: "12px",
+    padding: "10px 12px",
+    borderRadius: "8px",
+    background: "#FFECEC",
+    color: C.red,
+    fontSize: "13px",
+    fontWeight: 600,
+  },
+  retryLink: {
+    marginLeft: "8px",
+    background: "transparent",
+    border: "none",
+    color: C.red,
+    textDecoration: "underline",
+    cursor: "pointer",
+    fontWeight: 700,
     fontFamily: C.font,
   },
   resultCount: {

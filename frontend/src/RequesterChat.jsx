@@ -1,11 +1,11 @@
-import React, { useState, useRef, useEffect, useMemo } from "react";
+import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { getRequest, submitChatbotReview } from "./api.js";
+import { answersToItReview } from "./itReview.js";
 
 // -----------------------------------------------------------------
 // MASTER QUESTION LIST (Part B)
-// Each step: id, label (short tag shown next to bot message), bot text,
-// type: "text" | "choice" | "multiselect",
-// options (for choice/multiselect),
-// skip(answers) -> true if this step should be skipped given answers so far
+// software_name / scope_of_usage are skipped when already present from
+// the intake form (pre-seeded into answers on load).
 // -----------------------------------------------------------------
 const STEPS = [
   {
@@ -14,6 +14,7 @@ const STEPS = [
     bot: "What's the name of the software you're requesting?",
     type: "text",
     placeholder: "e.g. Zoom, Adobe Creative Cloud",
+    skip: (a) => Boolean(a.software_name),
   },
   {
     id: "scope_of_usage",
@@ -26,6 +27,7 @@ const STEPS = [
       { label: "One department or office", value: "Department" },
       { label: "An entire college or the whole university", value: "University" },
     ],
+    skip: (a) => Boolean(a.scope_of_usage),
   },
   {
     id: "estimated_users",
@@ -220,81 +222,121 @@ function visibleSteps(answers) {
   return STEPS.filter((s) => !(s.skip && s.skip(answers)));
 }
 
-// -----------------------------------------------------------------
-// PART C — flag computation logic (mirrors the Python spec exactly)
-// Computed silently. Never rendered to the requester — staff/admin only.
-// -----------------------------------------------------------------
-export function evaluate(a) {
-  const scopeQualifies = a.scope_of_usage === "Classroom" || a.scope_of_usage === "University";
-  const highUsers = a.estimated_users === "30-100" || a.estimated_users === "100+";
-  const ati_flag = highUsers && scopeQualifies;
-  const ati_flag_reason = `${a.estimated_users} users, ${a.scope_of_usage} scope`;
-
-  const blockA = {
-    HIPAA: a.la_health === "yes",
-    PII: a.la_pii === "yes",
-    "PCI DSS / GLBA": a.la_payment === "yes",
-    "Law Enforcement Records": a.la_lawenforcement === "yes",
-  };
-  const blockATriggered = Object.keys(blockA).filter((k) => blockA[k]);
-
-  const blockB = {
-    FERPA: a.lb_coursework === "yes",
-    "Employee Information": a.lb_employee === "yes",
-    Financials: a.lb_budget === "yes",
-    "Research/IP": a.lb_research === "yes",
-    "Attorney-client": a.lb_legal === "yes",
-  };
-  const blockBTriggered = Object.keys(blockB).filter((k) => blockB[k]);
-
-  let risk_level, security_flag, security_flag_reason;
-  if (blockATriggered.length > 0) {
-    risk_level = "High";
-    security_flag = true;
-    security_flag_reason = "Level 1 data: " + blockATriggered.join(", ");
-  } else if (blockBTriggered.length > 0) {
-    risk_level = "Medium";
-    security_flag = true;
-    security_flag_reason = "Level 2 data: " + blockBTriggered.join(", ");
-  } else {
-    risk_level = "Low";
-    security_flag = false;
-    security_flag_reason = "No Level 1 or Level 2 data identified";
+function findFirstStepIndex(answers) {
+  let i = 0;
+  while (i < STEPS.length && STEPS[i].skip && STEPS[i].skip(answers)) {
+    i++;
   }
-
-  const integration_flag = a.shares_data_with_campus_system === "yes";
-  const integration_flag_reason =
-    a.integration_explanation || (integration_flag ? "Shares data with another campus system" : null);
-
-  return {
-    ati_flag,
-    ati_flag_reason,
-    security_flag,
-    security_flag_reason,
-    risk_level,
-    integration_flag,
-    integration_flag_reason,
-  };
+  return i;
 }
 
 function RequesterChat({ requestId }) {
   const [answers, setAnswers] = useState({});
-  const [log, setLog] = useState([{ from: "bot", label: STEPS[0].label, text: STEPS[0].bot }]);
-  const [stepIndex, setStepIndex] = useState(0); // index into full STEPS array
+  const [log, setLog] = useState([]);
+  const [stepIndex, setStepIndex] = useState(0);
   const [textInput, setTextInput] = useState("");
   const [multiSelected, setMultiSelected] = useState([]);
   const [done, setDone] = useState(false);
+  const [loading, setLoading] = useState(Boolean(requestId));
+  const [loadError, setLoadError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
+  const [pendingAnswers, setPendingAnswers] = useState(null);
   const scrollRef = useRef(null);
+
+  const persistReview = useCallback(
+    async (finalAnswers) => {
+      if (!requestId) {
+        setDone(true);
+        return;
+      }
+      setSubmitting(true);
+      setSubmitError(null);
+      try {
+        const it_review = answersToItReview(finalAnswers);
+        await submitChatbotReview(requestId, it_review);
+        setPendingAnswers(null);
+        setDone(true);
+        setLog((l) => {
+          const already = l.some((e) => e.label === "Submitted");
+          if (already) return l;
+          return [
+            ...l,
+            {
+              from: "bot",
+              label: "Submitted",
+              text: "Thanks — that's everything I need. Your request has been submitted for IT Review.",
+            },
+          ];
+        });
+      } catch (err) {
+        setPendingAnswers(finalAnswers);
+        setSubmitError(err.message || "Could not save your answers. Please try again.");
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [requestId]
+  );
+
+  // Load the intake record once per requestId.
+  // Important: do NOT gate on a "bootstrapped" ref — React Strict Mode
+  // runs effect → cleanup → effect again on the same instance, which would
+  // leave loading stuck forever after cancelling the first fetch.
+  useEffect(() => {
+    if (!requestId) {
+      setLog([{ from: "bot", label: STEPS[0].label, text: STEPS[0].bot }]);
+      setStepIndex(0);
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    setLoadError(null);
+
+    (async () => {
+      try {
+        const record = await getRequest(requestId);
+        if (cancelled) return;
+        const requestor = record.requestor || {};
+        const seeded = {
+          software_name: requestor.software_name || undefined,
+          scope_of_usage: requestor.scope_of_usage || undefined,
+        };
+        Object.keys(seeded).forEach((k) => seeded[k] === undefined && delete seeded[k]);
+
+        const startIndex = findFirstStepIndex(seeded);
+        setAnswers(seeded);
+        setStepIndex(startIndex);
+        if (startIndex < STEPS.length) {
+          setLog([{ from: "bot", label: STEPS[startIndex].label, text: STEPS[startIndex].bot }]);
+        } else if (!cancelled) {
+          await persistReview(seeded);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setLoadError(err.message || "Could not load this request.");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [requestId, persistReview]);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
     }
-  }, [log]);
+  }, [log, submitError]);
 
   const currentStep = STEPS[stepIndex];
   const visible = useMemo(() => visibleSteps(answers), [answers]);
-  const visiblePosition = visible.findIndex((s) => s.id === currentStep.id);
+  const visiblePosition = currentStep ? visible.findIndex((s) => s.id === currentStep.id) : -1;
 
   function findNextIndex(fromIndex, updatedAnswers) {
     let i = fromIndex + 1;
@@ -310,22 +352,12 @@ function RequesterChat({ requestId }) {
       setStepIndex(index);
       setMultiSelected([]);
     } else {
-      setLog((l) => [
-        ...l,
-        {
-          from: "bot",
-          label: "Submitted",
-          text: "Thanks — that's everything I need. Your request has been submitted for IT Review.",
-        },
-      ]);
-      // Flags are computed here for the reviewer dashboard, but intentionally never shown to the requester.
-      const flags = evaluate(updatedAnswers);
-      console.log("Computed flags (staff/admin only):", flags);
-      setDone(true);
+      persistReview(updatedAnswers);
     }
   }
 
   function advance(value, displayText) {
+    if (submitting) return;
     const updated = { ...answers, [currentStep.id]: value };
     setLog((l) => [...l, { from: "user", text: displayText }]);
     setAnswers(updated);
@@ -356,6 +388,41 @@ function RequesterChat({ requestId }) {
 
   const totalVisible = visible.length;
 
+  if (loading) {
+    return (
+      <div style={styles.page}>
+        <div style={styles.card}>
+          <div style={styles.masthead}>
+            <div style={styles.badge}>SDSU</div>
+            <div>
+              <div style={styles.headline}>Software Request Assistant</div>
+              <div style={styles.ticketRow}>
+                {requestId ? `Request #${requestId.slice(0, 8)}` : "IT Review intake"}
+              </div>
+            </div>
+          </div>
+          <div style={styles.footer}>Loading your request…</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div style={styles.page}>
+        <div style={styles.card}>
+          <div style={styles.masthead}>
+            <div style={styles.badge}>SDSU</div>
+            <div>
+              <div style={styles.headline}>Software Request Assistant</div>
+            </div>
+          </div>
+          <div style={{ ...styles.footer, color: "var(--red)" }}>{loadError}</div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={styles.page}>
       <div style={styles.card}>
@@ -371,7 +438,7 @@ function RequesterChat({ requestId }) {
         </div>
 
         {/* Step sequence */}
-        {!done && (
+        {!done && currentStep && (
           <React.Fragment>
             <div style={styles.dotsWrap}>
               {visible.map((s, i) => (
@@ -421,7 +488,20 @@ function RequesterChat({ requestId }) {
         </div>
 
         {/* Input */}
-        {!done ? (
+        {submitting ? (
+          <div style={styles.footer}>Saving your answers…</div>
+        ) : submitError ? (
+          <div style={styles.errorWrap}>
+            <div style={styles.errorText}>{submitError}</div>
+            <button
+              style={styles.textSubmit}
+              onClick={() => persistReview(pendingAnswers || answers)}
+              type="button"
+            >
+              Try again
+            </button>
+          </div>
+        ) : !done && currentStep ? (
           currentStep.type === "choice" ? (
             <div style={styles.choiceList}>
               {currentStep.options.map((opt) => (
@@ -672,6 +752,20 @@ const styles = {
     fontFamily: "'IBM Plex Mono', monospace",
     fontSize: "11px",
     color: "var(--stone)",
+    textAlign: "center",
+  },
+  errorWrap: {
+    padding: "16px 28px 22px",
+    borderTop: "1px solid var(--line)",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: "12px",
+  },
+  errorText: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "12px",
+    color: "var(--red)",
     textAlign: "center",
   },
 };

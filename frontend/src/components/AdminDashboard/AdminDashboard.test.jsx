@@ -1,91 +1,120 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MOCK_REQUESTS } from './mockData.js';
 import AdminDashboard from './AdminDashboard.jsx';
 import RequestDetail from './RequestDetail.jsx';
 
+vi.mock('../../api.js', () => ({
+  listRequests: vi.fn(),
+  patchAdmin: vi.fn(),
+}));
+
+import { listRequests, patchAdmin } from '../../api.js';
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  listRequests.mockResolvedValue({ items: MOCK_REQUESTS, count: MOCK_REQUESTS.length });
+  patchAdmin.mockImplementation(async (_id, payload) => {
+    const base = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
+    return {
+      ...base,
+      admin: {
+        overrides: payload.overrides,
+        override_reason: payload.override_reason,
+        overridden_by: payload.overridden_by,
+        admin_notes: payload.admin_notes,
+      },
+      updated_at: new Date().toISOString(),
+    };
+  });
+});
+
+async function renderDashboard() {
+  render(<AdminDashboard />);
+  await waitFor(() => {
+    expect(screen.getByText('CampusHealth360')).toBeInTheDocument();
+  });
+}
+
 // ── AdminDashboard list view ──────────────────────────────────────────────────
 
 describe('AdminDashboard — list view', () => {
-  it('renders all mock requests in the table', () => {
-    render(<AdminDashboard />);
+  it('renders all mock requests in the table', async () => {
+    await renderDashboard();
     MOCK_REQUESTS.forEach((r) => {
       expect(screen.getByText(r.requestor.software_name)).toBeInTheDocument();
     });
   });
 
-  it('shows a High risk badge for CampusHealth360', () => {
-    render(<AdminDashboard />);
-    // The High badge should appear (may appear more than once in the table)
+  it('shows a High risk badge for CampusHealth360', async () => {
+    await renderDashboard();
     const badges = screen.getAllByText('High');
     expect(badges.length).toBeGreaterThan(0);
   });
 
-  it('shows a Medium risk badge for AutoCAD LT', () => {
-    render(<AdminDashboard />);
+  it('shows a Medium risk badge for AutoCAD LT', async () => {
+    await renderDashboard();
     const badges = screen.getAllByText('Medium');
     expect(badges.length).toBeGreaterThan(0);
   });
 
-  it('shows a Low risk badge for ResearchTrack Pro', () => {
-    render(<AdminDashboard />);
+  it('shows a Low risk badge for ResearchTrack Pro', async () => {
+    await renderDashboard();
     const badges = screen.getAllByText('Low');
     expect(badges.length).toBeGreaterThan(0);
   });
 
-  it('filters requests by status', () => {
-    render(<AdminDashboard />);
+  it('filters requests by status', async () => {
+    await renderDashboard();
     const select = screen.getByLabelText('Filter by status');
     fireEvent.change(select, { target: { value: 'Submitted' } });
-    // Only AutoCAD LT has status Submitted
     expect(screen.getByText('AutoCAD LT')).toBeInTheDocument();
     expect(screen.queryByText('CampusHealth360')).not.toBeInTheDocument();
     expect(screen.queryByText('ResearchTrack Pro')).not.toBeInTheDocument();
   });
 
-  it('filters requests by flag type (security)', () => {
-    render(<AdminDashboard />);
+  it('filters requests by flag type (security)', async () => {
+    await renderDashboard();
     const select = screen.getByLabelText('Filter by flag');
     fireEvent.change(select, { target: { value: 'security' } });
-    // CampusHealth360 and AutoCAD LT have security flag; ResearchTrack Pro does not
     expect(screen.getByText('CampusHealth360')).toBeInTheDocument();
     expect(screen.getByText('AutoCAD LT')).toBeInTheDocument();
     expect(screen.queryByText('ResearchTrack Pro')).not.toBeInTheDocument();
   });
 
-  it('filters requests by department', () => {
-    render(<AdminDashboard />);
+  it('filters requests by department', async () => {
+    await renderDashboard();
     const select = screen.getByLabelText('Filter by department');
     fireEvent.change(select, { target: { value: 'Engineering' } });
     expect(screen.getByText('AutoCAD LT')).toBeInTheDocument();
     expect(screen.queryByText('CampusHealth360')).not.toBeInTheDocument();
   });
 
-  it('searches by software name', () => {
-    render(<AdminDashboard />);
+  it('searches by software name', async () => {
+    await renderDashboard();
     const input = screen.getByPlaceholderText(/search/i);
     fireEvent.change(input, { target: { value: 'campus' } });
     expect(screen.getByText('CampusHealth360')).toBeInTheDocument();
     expect(screen.queryByText('AutoCAD LT')).not.toBeInTheDocument();
   });
 
-  it('shows "No requests match" when filters eliminate all results', () => {
-    render(<AdminDashboard />);
+  it('shows "No requests match" when filters eliminate all results', async () => {
+    await renderDashboard();
     const input = screen.getByPlaceholderText(/search/i);
     fireEvent.change(input, { target: { value: 'zzznomatch' } });
     expect(screen.getByText(/no requests match/i)).toBeInTheDocument();
   });
 
-  it('shows a Clear filters button when a filter is active', () => {
-    render(<AdminDashboard />);
+  it('shows a Clear filters button when a filter is active', async () => {
+    await renderDashboard();
     expect(screen.queryByText(/clear filters/i)).not.toBeInTheDocument();
     const input = screen.getByPlaceholderText(/search/i);
     fireEvent.change(input, { target: { value: 'zoom' } });
     expect(screen.getByText(/clear filters/i)).toBeInTheDocument();
   });
 
-  it('clears all filters when Clear filters is clicked', () => {
-    render(<AdminDashboard />);
+  it('clears all filters when Clear filters is clicked', async () => {
+    await renderDashboard();
     const input = screen.getByPlaceholderText(/search/i);
     fireEvent.change(input, { target: { value: 'zoom' } });
     fireEvent.click(screen.getByText(/clear filters/i));
@@ -94,10 +123,9 @@ describe('AdminDashboard — list view', () => {
     });
   });
 
-  it('opens the detail panel when a row is clicked', () => {
-    render(<AdminDashboard />);
+  it('opens the detail panel when a row is clicked', async () => {
+    await renderDashboard();
     fireEvent.click(screen.getByText('CampusHealth360'));
-    // Detail panel title should appear
     expect(screen.getAllByText('CampusHealth360').length).toBeGreaterThan(1);
     expect(screen.getByText(/requestor information/i)).toBeInTheDocument();
   });
@@ -115,7 +143,6 @@ describe('RequestDetail — flag display', () => {
       <RequestDetail request={highRiskRequest} onClose={noop} onSaved={noop} />
     );
     const flaggedPills = screen.getAllByText('Flagged');
-    // Each flag row shows Computed + Effective columns — 3 flags × 2 = at least 6 "Flagged" labels
     expect(flaggedPills.length).toBeGreaterThanOrEqual(6);
   });
 
@@ -131,7 +158,6 @@ describe('RequestDetail — flag display', () => {
     render(
       <RequestDetail request={highRiskRequest} onClose={noop} onSaved={noop} />
     );
-    // Spot-check several field labels
     expect(screen.getByText('Name')).toBeInTheDocument();
     expect(screen.getByText('Phone')).toBeInTheDocument();
     expect(screen.getByText('Funding source')).toBeInTheDocument();
@@ -150,10 +176,8 @@ describe('RequestDetail — flag display', () => {
     render(
       <RequestDetail request={highRiskRequest} onClose={noop} onSaved={noop} />
     );
-    // Each of the 3 flag rows has a "Computed" column label
     const computedLabels = screen.getAllByText('Computed');
     expect(computedLabels.length).toBe(3);
-    // "Override" appears as the column header label AND the toggle button text (3 + 3 = 6)
     const overrideLabels = screen.getAllByText('Override');
     expect(overrideLabels.length).toBe(6);
   });
@@ -174,33 +198,27 @@ describe('RequestDetail — override validation', () => {
     const onSaved = vi.fn();
     render(<RequestDetail request={request} onClose={noop} onSaved={onSaved} />);
 
-    // Click the ATI toggle button by testid
     fireEvent.click(screen.getByTestId('toggle-ati-review'));
-
-    // Try to save without filling in a reason
     fireEvent.click(screen.getByText('Save changes'));
 
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(screen.getByText(/An override reason is required/i)).toBeInTheDocument()
     );
     expect(onSaved).not.toHaveBeenCalled();
+    expect(patchAdmin).not.toHaveBeenCalled();
   });
 
   it('blocks save and shows error when override is set, reason filled, but reviewer ID is missing', async () => {
     const onSaved = vi.fn();
     render(<RequestDetail request={request} onClose={noop} onSaved={onSaved} />);
 
-    // Toggle ATI override
     fireEvent.click(screen.getByTestId('toggle-ati-review'));
-
-    // Fill in reason but not reviewer ID
     fireEvent.change(screen.getByLabelText('Override reason'), {
       target: { value: 'Manually confirmed ATI is not needed for this use case.' },
     });
-
     fireEvent.click(screen.getByText('Save changes'));
 
-    await vi.waitFor(() =>
+    await waitFor(() =>
       expect(screen.getByText(/Please enter the name or ID of the reviewer/i)).toBeInTheDocument()
     );
     expect(onSaved).not.toHaveBeenCalled();
@@ -212,49 +230,47 @@ describe('RequestDetail — override validation', () => {
 
     fireEvent.click(screen.getByText('Save changes'));
 
-    // Wait for the simulated async save
-    await vi.waitFor(() => expect(onSaved).toHaveBeenCalled(), { timeout: 1000 });
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(patchAdmin).toHaveBeenCalled();
   });
 
   it('calls onSaved after filling in reason and reviewer ID when override is active', async () => {
     const onSaved = vi.fn();
     render(<RequestDetail request={request} onClose={noop} onSaved={onSaved} />);
 
-    // Toggle ATI override via testid
     fireEvent.click(screen.getByTestId('toggle-ati-review'));
-
     fireEvent.change(screen.getByLabelText('Override reason'), {
       target: { value: 'Business justification provided by department head.' },
     });
     fireEvent.change(screen.getByLabelText('Reviewer name or ID'), {
       target: { value: 'jdoe' },
     });
-
     fireEvent.click(screen.getByText('Save changes'));
 
-    await vi.waitFor(() => expect(onSaved).toHaveBeenCalled(), { timeout: 1000 });
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
     const savedArg = onSaved.mock.calls[0][0];
     expect(savedArg.admin.overridden_by).toBe('jdoe');
-    expect(savedArg.admin.override_reason).toBe('Business justification provided by department head.');
+    expect(savedArg.admin.override_reason).toBe(
+      'Business justification provided by department head.'
+    );
+    expect(patchAdmin).toHaveBeenCalledWith(
+      'bbb-002',
+      expect.objectContaining({
+        overridden_by: 'jdoe',
+        override_reason: 'Business justification provided by department head.',
+      })
+    );
   });
 
   it('cycles toggle through Override → Flagged → Clear → None', () => {
     render(<RequestDetail request={request} onClose={noop} onSaved={noop} />);
 
     const btn = screen.getByTestId('toggle-ati-review');
-
-    // Initially null → button says "Override"
     expect(btn.textContent).toBe('Override');
-
-    // null → true: button says "Set → Clear"
     fireEvent.click(btn);
     expect(btn.textContent).toMatch(/Clear/);
-
-    // true → false: button says "Set → Flag"
     fireEvent.click(btn);
     expect(btn.textContent).toMatch(/Flag/);
-
-    // false → null: button says "Override" again
     fireEvent.click(btn);
     expect(btn.textContent).toBe('Override');
   });
@@ -263,21 +279,20 @@ describe('RequestDetail — override validation', () => {
     const onSaved = vi.fn();
     render(<RequestDetail request={request} onClose={noop} onSaved={onSaved} />);
 
-    // Toggle ATI override via testid
     fireEvent.click(screen.getByTestId('toggle-ati-review'));
-
     fireEvent.change(screen.getByLabelText('Override reason'), {
       target: { value: 'Business justification provided by department head.' },
     });
     fireEvent.change(screen.getByLabelText('Reviewer name or ID'), {
       target: { value: 'jdoe' },
     });
-
     fireEvent.click(screen.getByText('Save changes'));
 
-    await vi.waitFor(() => expect(onSaved).toHaveBeenCalled(), { timeout: 1000 });
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
     const savedArg = onSaved.mock.calls[0][0];
     expect(savedArg.admin.overridden_by).toBe('jdoe');
-    expect(savedArg.admin.override_reason).toBe('Business justification provided by department head.');
+    expect(savedArg.admin.override_reason).toBe(
+      'Business justification provided by department head.'
+    );
   });
 });
