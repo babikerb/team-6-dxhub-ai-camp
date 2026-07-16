@@ -7,9 +7,10 @@ import RequestDetail from './RequestDetail.jsx';
 vi.mock('../../api.js', () => ({
   listRequests: vi.fn(),
   patchAdmin: vi.fn(),
+  getReviewDocs: vi.fn(),
 }));
 
-import { listRequests, patchAdmin } from '../../api.js';
+import { listRequests, patchAdmin, getReviewDocs } from '../../api.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -26,6 +27,12 @@ beforeEach(() => {
       },
       updated_at: new Date().toISOString(),
     };
+  });
+  // Return the review_docs already on each mock record so the live fetch
+  // matches what the table expects.
+  getReviewDocs.mockImplementation(async (requestId) => {
+    const record = MOCK_REQUESTS.find((r) => r.request_id === requestId);
+    return { request_id: requestId, review_docs: record?.review_docs ?? {} };
   });
 });
 
@@ -422,5 +429,118 @@ describe('RequestDetail — override validation', () => {
     expect(savedArg.admin.override_reason).toBe(
       'Business justification provided by department head.'
     );
+  });
+});
+
+
+// ── AdminDashboard — review document columns ──────────────────────────────────
+
+describe('AdminDashboard — review document columns', () => {
+  it('renders Review Docs column header', async () => {
+    await renderDashboard();
+    expect(screen.getByText('Review Docs')).toBeInTheDocument();
+  });
+
+  it('shows "pending" pills for requests with no review docs (aaa-001)', async () => {
+    await renderDashboard();
+    // aaa-001 has all three as pending — look for the pill text
+    const pendingPills = screen.getAllByText(/ATI: pending/);
+    expect(pendingPills.length).toBeGreaterThan(0);
+  });
+
+  it('shows "no docs" pill for ITSO no_docs state (ccc-003)', async () => {
+    await renderDashboard();
+    const noDocsPills = screen.getAllByText('SEC: no docs');
+    expect(noDocsPills.length).toBeGreaterThan(0);
+  });
+
+  it('shows "no docs" pill for Integration no_docs state (bbb-002)', async () => {
+    await renderDashboard();
+    const noDocsPills = screen.getAllByText('INT: no docs');
+    expect(noDocsPills.length).toBeGreaterThan(0);
+  });
+
+  it('shows download pills for complete ATI docs (bbb-002 has privacy_policy.pdf and vpat.pdf)', async () => {
+    await renderDashboard();
+    expect(screen.getAllByLabelText('Download privacy_policy.pdf').length).toBeGreaterThan(0);
+    expect(screen.getAllByLabelText('Download vpat.pdf').length).toBeGreaterThan(0);
+  });
+
+  it('shows download pills for complete ITSO docs (bbb-002 has hecvat.pdf)', async () => {
+    await renderDashboard();
+    expect(screen.getAllByLabelText('Download hecvat.pdf').length).toBeGreaterThan(0);
+    expect(screen.getAllByLabelText('Download soc2.pdf').length).toBeGreaterThan(0);
+    expect(screen.getAllByLabelText('Download terms_of_service.pdf').length).toBeGreaterThan(0);
+  });
+
+  it('download link href matches the presigned URL in mock data', async () => {
+    await renderDashboard();
+    const links = screen.getAllByLabelText('Download vpat.pdf');
+    const hrefs = links.map((l) => l.getAttribute('href'));
+    expect(hrefs).toContain('https://example.s3.amazonaws.com/presigned/vpat.pdf');
+  });
+
+  it('download links open in a new tab (target=_blank)', async () => {
+    await renderDashboard();
+    const links = screen.getAllByLabelText('Download vpat.pdf');
+    links.forEach((l) => expect(l.getAttribute('target')).toBe('_blank'));
+  });
+});
+
+// ── RequestDetail — review documents section ──────────────────────────────────
+
+describe('RequestDetail — review documents section', () => {
+  const noop = vi.fn();
+
+  it('renders the Review Documents section heading', () => {
+    const req = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
+    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
+    expect(screen.getByText('Review Documents')).toBeInTheDocument();
+  });
+
+  it('shows ATI Docs, ITSO Docs, and Integration Docs row labels', () => {
+    const req = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
+    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
+    expect(screen.getByText('ATI Docs')).toBeInTheDocument();
+    expect(screen.getByText('ITSO Docs')).toBeInTheDocument();
+    expect(screen.getByText('Integration Docs')).toBeInTheDocument();
+  });
+
+  it('shows download links for complete ATI docs in the detail panel', () => {
+    const req = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
+    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
+    // bbb-002 has ATI complete with vpat.pdf and privacy_policy.pdf
+    const links = screen.getAllByLabelText(/Download vpat\.pdf/i);
+    expect(links.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('shows "No documents found" for Integration no_docs in detail panel (bbb-002)', () => {
+    const req = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
+    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
+    expect(screen.getAllByText('No documents found').length).toBeGreaterThan(0);
+  });
+
+  it('shows "Review in progress, gathering documents" for pending type in detail panel', () => {
+    const req = MOCK_REQUESTS.find((r) => r.request_id === 'aaa-001');
+    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
+    const pending = screen.getAllByText('Review in progress, gathering documents');
+    // aaa-001 has all three pending
+    expect(pending.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('shows "No documents found. Contact vendor" for ITSO no_docs (ccc-003)', () => {
+    const req = MOCK_REQUESTS.find((r) => r.request_id === 'ccc-003');
+    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
+    expect(screen.getAllByText('No documents found. Contact vendor').length).toBeGreaterThan(0);
+  });
+
+  it('shows pending state for all three types when review_docs is absent', () => {
+    const req = {
+      ...MOCK_REQUESTS[0],
+      review_docs: undefined,
+    };
+    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
+    const pending = screen.getAllByText('Review in progress, gathering documents');
+    expect(pending.length).toBeGreaterThanOrEqual(3);
   });
 });

@@ -170,12 +170,107 @@ function FlagRow({
   );
 }
 
+// ── Review document sub-section ───────────────────────────────────────────────
+// Renders one review type's documents (or its status message) inside the panel.
+function ReviewTypeRow({ label, reviewSection }) {
+  const renderContent = () => {
+    if (!reviewSection) {
+      return (
+        <span style={rdStyles.pendingText}>
+          Review in progress, gathering documents
+        </span>
+      );
+    }
+
+    const { status, message, files = [] } = reviewSection;
+
+    if (status === "pending") {
+      return <span style={rdStyles.pendingText}>{message || "Review in progress, gathering documents"}</span>;
+    }
+
+    if (status === "no_docs") {
+      return <span style={rdStyles.noDocsText}>{message}</span>;
+    }
+
+    // status === "complete"
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+        {files.map((f) => (
+          <a
+            key={f.name}
+            href={f.url}
+            download={f.name}
+            target="_blank"
+            rel="noreferrer"
+            aria-label={`Download ${f.name}`}
+            style={rdStyles.downloadLink}
+          >
+            {f.name} ↓
+          </a>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <div style={rdStyles.reviewRow}>
+      <span style={rdStyles.reviewLabel}>{label}</span>
+      <div style={rdStyles.reviewContent}>{renderContent()}</div>
+    </div>
+  );
+}
+
+const rdStyles = {
+  reviewRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: "12px",
+    padding: "8px 0",
+    borderBottom: "1px solid var(--paper-alt)",
+    fontSize: "13px",
+  },
+  reviewLabel: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "11.5px",
+    color: "var(--stone)",
+    flexShrink: 0,
+    width: "110px",
+    paddingTop: "1px",
+  },
+  reviewContent: {
+    flex: 1,
+    textAlign: "right",
+  },
+  pendingText: {
+    fontSize: "12px",
+    color: "var(--stone-light)",
+    fontStyle: "italic",
+  },
+  noDocsText: {
+    fontSize: "12px",
+    color: "#B5650B",
+    fontStyle: "italic",
+  },
+  downloadLink: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    fontSize: "12px",
+    fontFamily: "'IBM Plex Mono', monospace",
+    color: "var(--red)",
+    textDecoration: "none",
+    fontWeight: 600,
+  },
+};
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function RequestDetail({ request, onClose, onSaved }) {
   const requestor = request.requestor || {};
   const it_review = request.it_review || {};
   const flags = request.flags || {};
   const admin = request.admin || {};
+  const review_docs = request.review_docs || {};
 
   // Local override state — starts from whatever is already saved
   const [overrides, setOverrides] = useState({
@@ -348,6 +443,17 @@ export default function RequestDetail({ request, onClose, onSaved }) {
             <Field label="Compliance requirements" value={it_review.compliance_requirements} />
             <Field label="Compliance note" value={it_review.compliance_note} />
             <Field label="Vendor privacy policy" value={it_review.vendor_privacy_policy_url} />
+          </Section>
+
+          {/* ── Review Documents ── */}
+          <Section title="Review Documents">
+            <div style={{ marginBottom: "8px", fontSize: "12.5px", color: "var(--stone)", lineHeight: 1.5 }}>
+              Documents uploaded by ATI, Security (ITSO), and Integration reviewers.
+              Download links expire after 1 hour — refresh the page for a new link if needed.
+            </div>
+            <ReviewTypeRow label="ATI Docs"         reviewSection={review_docs.ati} />
+            <ReviewTypeRow label="ITSO Docs"        reviewSection={review_docs.itso} />
+            <ReviewTypeRow label="Integration Docs" reviewSection={review_docs.integration} />
           </Section>
 
           {/* ── Computed Flags ── */}

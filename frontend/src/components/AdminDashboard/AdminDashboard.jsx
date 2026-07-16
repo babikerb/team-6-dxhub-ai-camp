@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { listRequests } from "../../api.js";
+import { listRequests, getReviewDocs } from "../../api.js";
 import RequestDetail from "./RequestDetail.jsx";
 import { STATUS_ORDER, STATUS_LABELS, statusLabel } from "./statusConfig.js";
 import { effectiveFlags } from "./flagsUtil.js";
@@ -201,6 +201,109 @@ function emptyRequestor(requestor) {
   return requestor && typeof requestor === "object" ? requestor : {};
 }
 
+// ── Review document cell ──────────────────────────────────────────────────────
+// Single column showing ATI / ITSO / INT review doc status, stacked like flags.
+function ReviewDocPill({ label, reviewSection }) {
+  if (!reviewSection || reviewSection.status === "pending") {
+    return (
+      <span
+        style={{
+          display: "inline-block",
+          padding: "2px 8px",
+          borderRadius: "3px",
+          fontFamily: C.mono,
+          fontSize: "10.5px",
+          fontWeight: 700,
+          letterSpacing: "0.04em",
+          background: "transparent",
+          color: C.stoneLight,
+          border: `1px solid ${C.line}`,
+          marginRight: "4px",
+          marginBottom: "2px",
+        }}
+        title="Review in progress, gathering documents"
+      >
+        {label}: pending
+      </span>
+    );
+  }
+
+  const { status, message, files = [] } = reviewSection;
+
+  if (status === "no_docs") {
+    return (
+      <span
+        style={{
+          display: "inline-block",
+          padding: "2px 8px",
+          borderRadius: "3px",
+          fontFamily: C.mono,
+          fontSize: "10.5px",
+          fontWeight: 700,
+          letterSpacing: "0.04em",
+          background: "transparent",
+          color: "#B5650B",
+          border: `1px solid #B5650B`,
+          marginRight: "4px",
+          marginBottom: "2px",
+        }}
+        title={message}
+      >
+        {label}: no docs
+      </span>
+    );
+  }
+
+  // status === "complete"
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        flexDirection: "column",
+        gap: "1px",
+        marginBottom: "2px",
+      }}
+    >
+      {files.map((f) => (
+        <a
+          key={f.name}
+          href={f.url}
+          download={f.name}
+          target="_blank"
+          rel="noreferrer"
+          aria-label={`Download ${f.name}`}
+          style={{
+            display: "inline-block",
+            padding: "2px 8px",
+            borderRadius: "3px",
+            fontFamily: C.mono,
+            fontSize: "10.5px",
+            fontWeight: 700,
+            letterSpacing: "0.02em",
+            background: C.red,
+            color: C.white,
+            textDecoration: "none",
+            marginRight: "4px",
+          }}
+          title={`Download ${f.name}`}
+        >
+          {label}: {f.name} ↓
+        </a>
+      ))}
+    </span>
+  );
+}
+
+function ReviewDocsCell({ reviewDocs }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+      <ReviewDocPill label="ATI" reviewSection={reviewDocs?.ati} />
+      <ReviewDocPill label="SEC" reviewSection={reviewDocs?.itso} />
+      <ReviewDocPill label="INT" reviewSection={reviewDocs?.integration} />
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function AdminDashboard() {
   const [requests, setRequests] = useState([]);
@@ -208,6 +311,9 @@ export default function AdminDashboard() {
   const [error, setError] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [hoveredId, setHoveredId] = useState(null);
+  // reviewDocs: { [request_id]: { ati, itso, integration } }
+  // Populated by parallel GET /review-docs calls after the request list loads.
+  const [reviewDocs, setReviewDocs] = useState({});
 
   const [filterStatus, setFilterStatus] = useState("");
   const [filterFlag, setFilterFlag] = useState("");
@@ -224,8 +330,22 @@ export default function AdminDashboard() {
     }
     try {
       const data = await listRequests();
-      setRequests(Array.isArray(data.items) ? data.items : []);
+      const items = Array.isArray(data.items) ? data.items : [];
+      setRequests(items);
       setError(null);
+
+      // Fetch live review-doc status for every request in parallel.
+      // Failures per-request are swallowed so one bad item can't break the table.
+      const results = await Promise.allSettled(
+        items.map((r) => getReviewDocs(r.request_id))
+      );
+      const docsMap = {};
+      results.forEach((result, i) => {
+        if (result.status === "fulfilled") {
+          docsMap[items[i].request_id] = result.value.review_docs;
+        }
+      });
+      setReviewDocs(docsMap);
     } catch (err) {
       if (!silent) {
         setError(err.message || "Could not load requests.");
@@ -288,6 +408,12 @@ export default function AdminDashboard() {
     setRequests((prev) =>
       prev.map((r) => (r.request_id === updatedRequest.request_id ? updatedRequest : r))
     );
+    // Re-fetch live review docs for the updated request so the table stays current.
+    getReviewDocs(updatedRequest.request_id)
+      .then((data) =>
+        setReviewDocs((prev) => ({ ...prev, [updatedRequest.request_id]: data.review_docs }))
+      )
+      .catch(() => {}); // best-effort
     setSelectedId(null);
   }
 
@@ -420,18 +546,19 @@ export default function AdminDashboard() {
                 <th style={styles.th}>Status</th>
                 <th style={styles.th}>Flags</th>
                 <th style={styles.th}>Risk</th>
+                <th style={styles.th}>Review Docs</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} style={styles.emptyCell}>
+                  <td colSpan={7} style={styles.emptyCell}>
                     Loading…
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={6} style={styles.emptyCell}>
+                  <td colSpan={7} style={styles.emptyCell}>
                     {error
                       ? "Unable to load requests."
                       : requests.length === 0
@@ -445,6 +572,10 @@ export default function AdminDashboard() {
                   const flags = emptyFlags(r.flags);
                   const effective = effectiveFlags(flags, r.admin);
                   const active = selectedId === r.request_id || hoveredId === r.request_id;
+                  // Use live review-docs data fetched from the endpoint; fall
+                  // back to whatever is on the DynamoDB record if the fetch
+                  // hasn't completed yet or failed for this request.
+                  const liveReviewDocs = reviewDocs[r.request_id] || r.review_docs || {};
                   return (
                     <tr
                       key={r.request_id}
@@ -491,6 +622,9 @@ export default function AdminDashboard() {
                         ) : (
                           <span style={{ color: C.stone, fontSize: "12px" }}>Pending</span>
                         )}
+                      </td>
+                      <td style={styles.td} onClick={(e) => e.stopPropagation()}>
+                        <ReviewDocsCell reviewDocs={liveReviewDocs} />
                       </td>
                     </tr>
                   );
@@ -566,6 +700,8 @@ const styles = {
   },
   body: {
     padding: "28px",
+    maxWidth: "1400px",
+    margin: "0 auto",
   },
   filterBar: {
     display: "flex",
@@ -676,10 +812,14 @@ const styles = {
     border: `1px solid ${C.line}`,
     borderRadius: "10px",
     boxShadow: "0 1px 2px rgba(0,0,0,0.04), 0 12px 32px rgba(0,0,0,0.08)",
-    overflow: "hidden",
+    overflowX: "auto",
+    // Keep the rounded corners visible while still clipping the scrollable area.
+    WebkitOverflowScrolling: "touch",
   },
   table: {
     width: "100%",
+    // Enough room for 7 columns without cramping the review docs pills.
+    minWidth: "960px",
     borderCollapse: "collapse",
   },
   th: {
