@@ -215,15 +215,14 @@ def _stub_compute_flags(it_review: dict, scope_of_usage: str | None = None) -> d
     }
 
 
-# Median business days from submission to a closed decision, by risk level --
-# computed from 766 closed tickets in data/sc_req_item (7.7.2026).xlsx
-# (Initial risk analysis guidance vs. Business duration). Low Risk skews very
-# short (lots of same-day approvals); Medium/High take longer due to
-# ATI/Security/Integration review. Recompute if that export is refreshed.
-_MEDIAN_DAYS_TO_DECISION = {
-    "Low": 2,
-    "Medium": 3,
-    "High": 10,
+# Mean calendar days from submission to a closed decision, by risk level --
+# computed from all 1153 closed tickets in data/sc_req_item (7.7.2026).xlsx,
+# grouped by "Initial risk analysis guidance" and measured as Closed - Created.
+# Recompute if that export is refreshed.
+_MEAN_DAYS_TO_DECISION = {
+    "Low": 21.46,
+    "Medium": 46.94,
+    "High": 43.02,
 }
 
 _TERMINAL_STATUSES = {"Approved", "Denied"}
@@ -238,7 +237,7 @@ def estimate_days_remaining(record: dict) -> int | None:
         return None
 
     risk_level = (record.get("flags") or {}).get("risk_level")
-    baseline_days = _MEDIAN_DAYS_TO_DECISION.get(risk_level)
+    baseline_days = _MEAN_DAYS_TO_DECISION.get(risk_level)
     if baseline_days is None:
         return None
 
