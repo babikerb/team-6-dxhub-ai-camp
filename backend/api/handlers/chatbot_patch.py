@@ -41,8 +41,8 @@ def handler(event, context=None):
     store.save_request(record)
 
     try:
-        emailer.send_review_results_email(record)
+        emailer.send_ticket_received_email(record)
     except Exception as exc:
-        print(f"Review-results email failed for {record.get('request_id')}: {exc}")
+        print(f"Ticket-received email failed for {record.get('request_id')}: {exc}")
 
     return store.response(200, record)
