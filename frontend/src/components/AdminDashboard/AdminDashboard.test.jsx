@@ -129,6 +129,78 @@ describe('AdminDashboard — list view', () => {
     expect(screen.getAllByText('CampusHealth360').length).toBeGreaterThan(1);
     expect(screen.getByText(/requestor information/i)).toBeInTheDocument();
   });
+
+  it('labels the security flag pill ITSO (not SEC)', async () => {
+    await renderDashboard();
+    expect(screen.getAllByText('ITSO').length).toBe(MOCK_REQUESTS.length);
+    expect(screen.queryByText('SEC')).not.toBeInTheDocument();
+  });
+
+  it('marks a flagged-and-completed review with a "Review completed" pill', async () => {
+    await renderDashboard();
+    // bbb-002 has security_flag true + review_completions.security_flag true
+    expect(screen.getAllByTitle('Review completed').length).toBeGreaterThan(0);
+  });
+
+  it('renders the color legend', async () => {
+    await renderDashboard();
+    expect(screen.getByText('Not flagged')).toBeInTheDocument();
+    expect(screen.getByText('Review remaining')).toBeInTheDocument();
+    expect(screen.getByText('Review completed')).toBeInTheDocument();
+    expect(screen.getByText('* Staff override')).toBeInTheDocument();
+  });
+
+  it('renders unknown legacy statuses without crashing', async () => {
+    const legacy = {
+      ...MOCK_REQUESTS[0],
+      request_id: 'zzz-legacy',
+      status: 'FLAGSCOMPUTED',
+      requestor: { ...MOCK_REQUESTS[0].requestor, software_name: 'LegacyTool' },
+    };
+    listRequests.mockResolvedValue({ items: [legacy], count: 1 });
+    render(<AdminDashboard />);
+    await waitFor(() => expect(screen.getByText('LegacyTool')).toBeInTheDocument());
+    expect(screen.getByText('FLAGSCOMPUTED')).toBeInTheDocument();
+  });
+});
+
+// ── AdminDashboard — sorting ─────────────────────────────────────────────────
+
+describe('AdminDashboard — sorting', () => {
+  function firstRowText() {
+    // Row 0 is the header row.
+    return screen.getAllByRole('row')[1].textContent;
+  }
+
+  it('sorts newest first by default', async () => {
+    await renderDashboard();
+    expect(firstRowText()).toContain('AutoCAD LT'); // created 2026-07-14T14:00
+  });
+
+  it('sorts oldest first when selected', async () => {
+    await renderDashboard();
+    fireEvent.change(screen.getByLabelText('Sort by'), { target: { value: 'oldest' } });
+    expect(firstRowText()).toContain('QuickShare Cloud Drive'); // created 2026-06-15
+  });
+
+  it('sorts by risk High → Low when selected', async () => {
+    await renderDashboard();
+    fireEvent.change(screen.getByLabelText('Sort by'), { target: { value: 'risk' } });
+    // Both High-risk records first; CampusHealth360 is the newer of the two.
+    expect(firstRowText()).toContain('CampusHealth360');
+  });
+
+  it('sorts by department A–Z when selected', async () => {
+    await renderDashboard();
+    fireEvent.change(screen.getByLabelText('Sort by'), { target: { value: 'department' } });
+    expect(firstRowText()).toContain('CampusTour VR'); // Admissions
+  });
+
+  it('sorts by software name A–Z when selected', async () => {
+    await renderDashboard();
+    fireEvent.change(screen.getByLabelText('Sort by'), { target: { value: 'software' } });
+    expect(firstRowText()).toContain('AutoCAD LT');
+  });
 });
 
 // ── RequestDetail — flag display ──────────────────────────────────────────────
@@ -180,6 +252,47 @@ describe('RequestDetail — flag display', () => {
     expect(computedLabels.length).toBe(3);
     const overrideLabels = screen.getAllByText('Override');
     expect(overrideLabels.length).toBe(6);
+  });
+});
+
+// ── RequestDetail — review completion ─────────────────────────────────────────
+
+describe('RequestDetail — review completion', () => {
+  const highRiskRequest = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
+  const lowRiskRequest = MOCK_REQUESTS.find((r) => r.request_id === 'aaa-001');
+  const noop = vi.fn();
+
+  it('shows the saved completion state per review', () => {
+    render(<RequestDetail request={highRiskRequest} onClose={noop} onSaved={noop} />);
+    expect(screen.getByTestId('complete-itso-review').textContent).toMatch(/Completed/);
+    expect(screen.getByTestId('complete-ati-review').textContent).toBe('Remaining');
+    expect(screen.getByTestId('complete-integration-review').textContent).toBe('Remaining');
+  });
+
+  it('disables the completion toggle when the review does not apply', () => {
+    render(<RequestDetail request={lowRiskRequest} onClose={noop} onSaved={noop} />);
+    expect(screen.getByTestId('complete-ati-review')).toBeDisabled();
+    expect(screen.getByTestId('complete-itso-review')).toBeDisabled();
+  });
+
+  it('includes review_completions in the save payload', async () => {
+    const onSaved = vi.fn();
+    render(<RequestDetail request={highRiskRequest} onClose={noop} onSaved={onSaved} />);
+
+    fireEvent.click(screen.getByTestId('complete-ati-review'));
+    fireEvent.click(screen.getByText('Save changes'));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(patchAdmin).toHaveBeenCalledWith(
+      'bbb-002',
+      expect.objectContaining({
+        review_completions: {
+          ati_flag: true,
+          security_flag: true,
+          integration_flag: false,
+        },
+      })
+    );
   });
 });
 

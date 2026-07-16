@@ -114,6 +114,8 @@ export const MOCK_REQUESTS = [
     },
     admin: {
       overrides: { ati_flag: null, security_flag: null, integration_flag: null },
+      // ITSO review already done; ATI + Integration still open.
+      review_completions: { ati_flag: false, security_flag: true, integration_flag: false },
       override_reason: "",
       overridden_by: "",
       admin_notes: "",
@@ -412,6 +414,7 @@ export const MOCK_REQUESTS = [
     },
     admin: {
       overrides: { ati_flag: null, security_flag: null, integration_flag: null },
+      review_completions: { ati_flag: false, security_flag: false, integration_flag: false },
       override_reason: "",
       overridden_by: "",
       admin_notes: "Awaiting ATI coordinator sign-off on kiosk screen-reader support.",

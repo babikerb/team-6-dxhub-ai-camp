@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { listRequests } from "../../api.js";
 import RequestDetail from "./RequestDetail.jsx";
-import { STATUS_ORDER, STATUS_LABELS, statusColor, statusLabel } from "./statusConfig.js";
+import { STATUS_ORDER, STATUS_LABELS, statusLabel } from "./statusConfig.js";
 import { effectiveFlags } from "./flagsUtil.js";
 
 // ── Design tokens (matches RequesterChat.jsx / IntakeForm.jsx palette + type system) ──
@@ -28,11 +28,19 @@ function riskColor(level) {
   return C.stone;
 }
 
-function FlagPill({ value, label, overridden }) {
+const GREEN = "#2E7D32"; // review completed
+
+function FlagPill({ value, label, overridden, completed }) {
   const active = value === true;
+  const done = active && completed;
+  const state = !active
+    ? "Not flagged — no review required"
+    : done
+    ? "Review completed"
+    : "Review remaining";
   return (
     <span
-      title={overridden ? "Staff override in effect" : undefined}
+      title={overridden ? `${state} (staff override in effect)` : state}
       style={{
         display: "inline-block",
         padding: "2px 8px",
@@ -41,7 +49,7 @@ function FlagPill({ value, label, overridden }) {
         fontSize: "10.5px",
         fontWeight: 700,
         letterSpacing: "0.04em",
-        background: active ? C.red : "transparent",
+        background: done ? GREEN : active ? C.red : "transparent",
         color: active ? C.white : C.stoneLight,
         border: active ? "none" : `1px solid ${C.line}`,
         boxShadow: overridden ? `0 0 0 1.5px ${C.ink}` : "none",
@@ -53,6 +61,77 @@ function FlagPill({ value, label, overridden }) {
     </span>
   );
 }
+
+function LegendItem({ swatch, children }) {
+  return (
+    <span style={styles.legendItem}>
+      {swatch && <span style={{ ...styles.legendSwatch, ...swatch }} />}
+      {children}
+    </span>
+  );
+}
+
+function Legend() {
+  return (
+    <div style={styles.legend} aria-label="Color legend">
+      <span style={styles.legendGroupLabel}>Flags:</span>
+      <LegendItem swatch={{ background: "transparent", border: `1px solid ${C.line}` }}>
+        Not flagged
+      </LegendItem>
+      <LegendItem swatch={{ background: C.red }}>Review remaining</LegendItem>
+      <LegendItem swatch={{ background: GREEN }}>Review completed</LegendItem>
+      <LegendItem>* Staff override</LegendItem>
+      <span style={styles.legendGroupLabel}>Risk:</span>
+      <LegendItem swatch={{ background: C.red }}>High</LegendItem>
+      <LegendItem swatch={{ background: "#B5650B" }}>Medium</LegendItem>
+      <LegendItem swatch={{ background: C.stone }}>Low</LegendItem>
+    </div>
+  );
+}
+
+// ── Sorting ───────────────────────────────────────────────────────────────────
+
+const RISK_RANK = { High: 0, Medium: 1, Low: 2 }; // missing/"Pending" sorts last
+
+function createdAtMs(r) {
+  const t = Date.parse(r.created_at);
+  return Number.isNaN(t) ? 0 : t;
+}
+
+// Empty values sort last regardless of direction.
+function compareText(a, b) {
+  const ta = (a || "").trim();
+  const tb = (b || "").trim();
+  if (!ta && !tb) return 0;
+  if (!ta) return 1;
+  if (!tb) return -1;
+  return ta.localeCompare(tb);
+}
+
+const SORT_COMPARATORS = {
+  newest: (a, b) => createdAtMs(b) - createdAtMs(a),
+  oldest: (a, b) => createdAtMs(a) - createdAtMs(b),
+  risk: (a, b) =>
+    (RISK_RANK[emptyFlags(a.flags).risk_level] ?? 3) -
+      (RISK_RANK[emptyFlags(b.flags).risk_level] ?? 3) ||
+    createdAtMs(b) - createdAtMs(a),
+  department: (a, b) =>
+    compareText(emptyRequestor(a.requestor).department, emptyRequestor(b.requestor).department) ||
+    createdAtMs(b) - createdAtMs(a),
+  software: (a, b) =>
+    compareText(
+      emptyRequestor(a.requestor).software_name,
+      emptyRequestor(b.requestor).software_name
+    ) || createdAtMs(b) - createdAtMs(a),
+};
+
+const SORT_OPTIONS = [
+  ["newest", "Sort: Newest first"],
+  ["oldest", "Sort: Oldest first"],
+  ["risk", "Sort: Risk (High → Low)"],
+  ["department", "Sort: Department (A–Z)"],
+  ["software", "Sort: Software name (A–Z)"],
+];
 
 function Badge({ label, color }) {
   return (
@@ -95,24 +174,40 @@ export default function AdminDashboard() {
   const [filterFlag, setFilterFlag] = useState("");
   const [filterDept, setFilterDept] = useState("");
   const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState("newest");
 
-  const loadRequests = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  // silent = background poll: no loading state, and a transient failure
+  // must never wipe the rows already on screen.
+  const loadRequests = useCallback(async (silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const data = await listRequests();
       setRequests(Array.isArray(data.items) ? data.items : []);
+      setError(null);
     } catch (err) {
-      setError(err.message || "Could not load requests.");
-      setRequests([]);
+      if (!silent) {
+        setError(err.message || "Could not load requests.");
+        setRequests([]);
+      }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     loadRequests();
   }, [loadRequests]);
+
+  // Keep the list fresh without manual refreshes; paused while the edit
+  // panel is open so the record being edited isn't swapped underneath it.
+  useEffect(() => {
+    if (selectedId !== null) return undefined;
+    const timer = setInterval(() => loadRequests(true), 15000);
+    return () => clearInterval(timer);
+  }, [selectedId, loadRequests]);
 
   const departments = [
     ...new Set(
@@ -147,6 +242,8 @@ export default function AdminDashboard() {
     return true;
   });
 
+  const sorted = [...filtered].sort(SORT_COMPARATORS[sortBy] || SORT_COMPARATORS.newest);
+
   function handleSaved(updatedRequest) {
     setRequests((prev) =>
       prev.map((r) => (r.request_id === updatedRequest.request_id ? updatedRequest : r))
@@ -168,7 +265,7 @@ export default function AdminDashboard() {
         <button
           type="button"
           style={styles.refreshButton}
-          onClick={loadRequests}
+          onClick={() => loadRequests()}
           disabled={loading}
           aria-label="Refresh requests"
         >
@@ -208,7 +305,7 @@ export default function AdminDashboard() {
           >
             <option value="">All flags</option>
             <option value="ati">ATI flagged</option>
-            <option value="security">Security flagged</option>
+            <option value="security">ITSO flagged</option>
             <option value="integration">Integration flagged</option>
           </select>
 
@@ -222,6 +319,19 @@ export default function AdminDashboard() {
             {departments.map((d) => (
               <option key={d} value={d}>
                 {d}
+              </option>
+            ))}
+          </select>
+
+          <select
+            style={styles.select}
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            aria-label="Sort by"
+          >
+            {SORT_OPTIONS.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
               </option>
             ))}
           </select>
@@ -250,10 +360,13 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        <div style={styles.resultCount}>
-          {loading
-            ? "Loading requests…"
-            : `${filtered.length} request${filtered.length !== 1 ? "s" : ""}`}
+        <div style={styles.resultCountRow}>
+          <div style={styles.resultCount}>
+            {loading
+              ? "Loading requests…"
+              : `${filtered.length} request${filtered.length !== 1 ? "s" : ""}`}
+          </div>
+          <Legend />
         </div>
 
         <div style={styles.tableWrapper}>
@@ -286,7 +399,7 @@ export default function AdminDashboard() {
                   </td>
                 </tr>
               ) : (
-                filtered.map((r) => {
+                sorted.map((r) => {
                   const requestor = emptyRequestor(r.requestor);
                   const flags = emptyFlags(r.flags);
                   const effective = effectiveFlags(flags, r.admin);
@@ -316,12 +429,14 @@ export default function AdminDashboard() {
                       </td>
                       <td style={styles.td}>{requestor.department || "—"}</td>
                       <td style={styles.td}>
-                        <Badge label={statusLabel(r.status)} color={statusColor(r.status)} />
+                        {/* One neutral color on purpose — the label text carries the
+                            meaning; color stays reserved for Flags and Risk. */}
+                        <Badge label={statusLabel(r.status)} color="var(--stone)" />
                       </td>
                       <td style={styles.td}>
-                        <FlagPill value={effective.ati.value} overridden={effective.ati.overridden} label="ATI" />
-                        <FlagPill value={effective.security.value} overridden={effective.security.overridden} label="SEC" />
-                        <FlagPill value={effective.integration.value} overridden={effective.integration.overridden} label="INT" />
+                        <FlagPill value={effective.ati.value} overridden={effective.ati.overridden} completed={effective.ati.completed} label="ATI" />
+                        <FlagPill value={effective.security.value} overridden={effective.security.overridden} completed={effective.security.completed} label="ITSO" />
+                        <FlagPill value={effective.integration.value} overridden={effective.integration.overridden} completed={effective.integration.completed} label="INT" />
                       </td>
                       <td style={styles.td}>
                         {flags.risk_level ? (
@@ -468,12 +583,48 @@ const styles = {
     fontWeight: 700,
     fontFamily: C.sans,
   },
+  resultCountRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: "10px",
+    marginBottom: "10px",
+  },
   resultCount: {
     fontFamily: C.mono,
     fontSize: "11.5px",
     color: C.stone,
     letterSpacing: "0.02em",
-    marginBottom: "10px",
+  },
+  legend: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: "10px",
+    fontFamily: C.mono,
+    fontSize: "10.5px",
+    color: C.stone,
+  },
+  legendGroupLabel: {
+    fontWeight: 700,
+    textTransform: "uppercase",
+    letterSpacing: "0.05em",
+    fontSize: "9.5px",
+    color: C.ink,
+  },
+  legendItem: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    whiteSpace: "nowrap",
+  },
+  legendSwatch: {
+    display: "inline-block",
+    width: "10px",
+    height: "10px",
+    borderRadius: "2px",
+    boxSizing: "border-box",
   },
   tableWrapper: {
     background: C.white,
