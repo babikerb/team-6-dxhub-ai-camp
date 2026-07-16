@@ -293,98 +293,36 @@ const RENEWAL_INTRO =
   "product itself. It only takes a few minutes, and it keeps your review " +
   "accurate.";
 
-// -----------------------------------------------------------------
-// PART C — flag computation logic (mirrors the Python spec exactly)
-// Computed silently. Never rendered to the requester — staff/admin only.
-// -----------------------------------------------------------------
-export function evaluate(a) {
-  const scopeQualifies =
-    a.scope_of_usage === "Classroom" ||
-    a.scope_of_usage === "College" ||
-    a.scope_of_usage === "University";
-  const highUsers = a.estimated_users === "30-100" || a.estimated_users === "100+";
-  const ati_flag = highUsers && scopeQualifies;
-  const ati_flag_reason = `${a.estimated_users} users, ${a.scope_of_usage} scope`;
-
-  const blockA = {
-    HIPAA: a.la_health === "yes",
-    PII: a.la_pii === "yes",
-    "PCI DSS / GLBA": a.la_payment === "yes",
-    "Law Enforcement Records": a.la_lawenforcement === "yes",
-  };
-  const blockATriggered = Object.keys(blockA).filter((k) => blockA[k]);
-
-  const blockB = {
-    FERPA: a.lb_coursework === "yes",
-    "Employee Information": a.lb_employee === "yes",
-    Financials: a.lb_budget === "yes",
-    "Research/IP": a.lb_research === "yes",
-    "Attorney-client": a.lb_legal === "yes",
-  };
-  const blockBTriggered = Object.keys(blockB).filter((k) => blockB[k]);
-
-  let risk_level, security_flag, security_flag_reason;
-  if (blockATriggered.length > 0) {
-    risk_level = "High";
-    security_flag = true;
-    security_flag_reason = "Level 1 data: " + blockATriggered.join(", ");
-  } else if (blockBTriggered.length > 0) {
-    risk_level = "Medium";
-    security_flag = true;
-    security_flag_reason = "Level 2 data: " + blockBTriggered.join(", ");
-  } else {
-    risk_level = "Low";
-    security_flag = false;
-    security_flag_reason = "No Level 1 or Level 2 data identified";
+// Renders inline markdown within a single line: **bold**/__bold__,
+// *italic*/_italic_, and `inline code`. Returns an array of strings/nodes.
+function renderInline(text) {
+  const regex = /(\*\*|__)(.+?)\1|(`)(.+?)\3|(\*|_)(.+?)\5/g;
+  const nodes = [];
+  let lastIndex = 0;
+  let match;
+  let key = 0;
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) nodes.push(text.slice(lastIndex, match.index));
+    if (match[1]) {
+      nodes.push(<strong key={key++}>{match[2]}</strong>);
+    } else if (match[3]) {
+      nodes.push(
+        <code key={key++} style={styles.inlineCode}>
+          {match[4]}
+        </code>
+      );
+    } else if (match[5]) {
+      nodes.push(<em key={key++}>{match[6]}</em>);
+    }
+    lastIndex = regex.lastIndex;
   }
-
-  const integration_flag = a.shares_data_with_campus_system === "yes";
-  const integration_flag_reason =
-    a.integration_explanation || (integration_flag ? "Shares data with another campus system" : null);
-
-  // AI / Automated Decision System tracking (California AB 302). ai_flag marks
-  // any AI-enabled software; the reason calls out the high-risk ADS subset
-  // (used to make decisions about people) that goes on the state inventory.
-  const ai_flag = a.ai_capabilities === "yes";
-  let ai_flag_reason;
-  if (a.ai_automated_decisions === "yes") {
-    ai_flag_reason = "AI-enabled automated decision system — California ADS inventory (AB 302)";
-  } else if (ai_flag) {
-    ai_flag_reason = "AI-enabled software";
-  } else {
-    ai_flag_reason = "No AI capabilities reported";
-  }
-
-  return {
-    ati_flag,
-    ati_flag_reason,
-    security_flag,
-    security_flag_reason,
-    risk_level,
-    integration_flag,
-    integration_flag_reason,
-    ai_flag,
-    ai_flag_reason,
-  };
-}
-
-// (it_review is built by answersToItReview() from itReview.js — the team's
-// shared mapper — so the shape stays consistent across the app.)
-
-// Guaranteed catch-all: strip any markdown the backend missed, so literal
-// **, __, `, ~~, or [text](url) never reach the screen.
-function cleanMd(s) {
-  return String(s || "")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // [label](url) -> label
-    .replace(/\*\*/g, "")
-    .replace(/__/g, "")
-    .replace(/~~/g, "")
-    .replace(/`/g, "")
-    .replace(/(?<![\w*])\*(?=\S)([^*\n]+?)\*(?![\w*])/g, "$1"); // *italic* -> italic
+  if (lastIndex < text.length) nodes.push(text.slice(lastIndex));
+  return nodes;
 }
 
 // Renders a bot message as readable text: numbered/bulleted lines become an
-// indented list with a red marker; blank lines become spacing.
+// indented list with a red marker; blank lines become spacing; inline
+// markdown (bold/italic/code) is rendered within each line.
 function BotText({ text }) {
   const lines = String(text || "").split("\n");
   return (
@@ -396,7 +334,7 @@ function BotText({ text }) {
           return (
             <div key={i} style={styles.botListItem}>
               <span style={styles.botListMarker}>{num[1]}.</span>
-              <span>{cleanMd(num[2])}</span>
+              <span>{renderInline(num[2])}</span>
             </div>
           );
         }
@@ -404,14 +342,14 @@ function BotText({ text }) {
           return (
             <div key={i} style={styles.botListItem}>
               <span style={styles.botListMarker}>•</span>
-              <span>{cleanMd(bullet[1])}</span>
+              <span>{renderInline(bullet[1])}</span>
             </div>
           );
         }
         if (line.trim() === "") return <div key={i} style={{ height: "7px" }} />;
         return (
           <div key={i} style={{ marginBottom: "2px" }}>
-            {cleanMd(line)}
+            {renderInline(line)}
           </div>
         );
       })}
@@ -752,7 +690,7 @@ function RequesterChat({ requestId }) {
           <React.Fragment>
             <div style={styles.dotsWrap}>
               {visible.map((s, i) => (
-                <div key={s.id} style={styles.dotUnit}>
+                <div key={s.id} style={{ ...styles.dotUnit, flex: i < visible.length - 1 ? 1 : "0 0 auto" }}>
                   <div
                     style={{
                       ...styles.dot,
@@ -925,23 +863,15 @@ function RequesterChat({ requestId }) {
 
 const styles = {
   page: {
-    minHeight: "100vh",
+    height: "100vh",
     display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: "24px 20px",
     boxSizing: "border-box",
   },
   card: {
-    width: "75%",
-    maxWidth: "1000px",
-    minWidth: "320px",
-    height: "88vh",
+    width: "100%",
+    height: "100%",
     background: "#FFFFFF",
-    border: "1px solid var(--line)",
-    borderRadius: "14px",
     overflow: "hidden",
-    boxShadow: "0 1px 2px rgba(0,0,0,0.04), 0 16px 40px rgba(0,0,0,0.12)",
     display: "flex",
     flexDirection: "column",
   },
@@ -1076,6 +1006,14 @@ const styles = {
     fontWeight: 700,
     minWidth: "18px",
     flexShrink: 0,
+  },
+  inlineCode: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "0.9em",
+    background: "var(--paper-alt)",
+    border: "1px solid var(--line)",
+    borderRadius: "3px",
+    padding: "1px 5px",
   },
   orChoose: {
     padding: "14px 28px 6px",

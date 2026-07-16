@@ -12,4 +12,5 @@ def handler(event, context=None):
     if record is None:
         return store.error_response(404, f"No request found with id {request_id}")
 
+    record["estimated_days_remaining"] = store.estimate_days_remaining(record)
     return store.response(200, record)

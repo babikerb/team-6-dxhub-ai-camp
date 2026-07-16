@@ -131,3 +131,65 @@ def test_full_pipeline(dynamo_table):
     assert admin_body["status"] == "AdditionalReview"
     assert admin_body["admin"]["overrides"]["ati_flag"] is False
     assert admin_body["admin"]["overridden_by"] == "jsmith@sdsu.edu"
+
+
+def test_review_completions(dynamo_table):
+    from handlers import admin_patch, create_request
+    import handlers.store as store
+
+    created = _create(create_request)
+    record = json.loads(created["body"])
+    rid = record["request_id"]
+
+    # New requests start with every review not yet completed.
+    assert record["admin"]["review_completions"] == {
+        "ati_flag": False,
+        "security_flag": False,
+        "integration_flag": False,
+    }
+
+    # Mark the ITSO (security) review completed; others stay untouched.
+    res = admin_patch.handler(
+        {
+            "pathParameters": {"id": rid},
+            "body": json.dumps({"review_completions": {"security_flag": True}}),
+        }
+    )
+    assert res["statusCode"] == 200
+    body = json.loads(res["body"])
+    assert body["admin"]["review_completions"]["security_flag"] is True
+    assert body["admin"]["review_completions"]["ati_flag"] is False
+
+    # Unknown keys and non-boolean values are rejected.
+    bad_key = admin_patch.handler(
+        {
+            "pathParameters": {"id": rid},
+            "body": json.dumps({"review_completions": {"bogus_flag": True}}),
+        }
+    )
+    assert bad_key["statusCode"] == 400
+    bad_value = admin_patch.handler(
+        {
+            "pathParameters": {"id": rid},
+            "body": json.dumps({"review_completions": {"ati_flag": "yes"}}),
+        }
+    )
+    assert bad_value["statusCode"] == 400
+
+    # Records created before review_completions existed are normalized on patch.
+    legacy = store.get_request(rid)
+    del legacy["admin"]["review_completions"]
+    store.save_request(legacy)
+    patched = admin_patch.handler(
+        {
+            "pathParameters": {"id": rid},
+            "body": json.dumps({"review_completions": {"ati_flag": True}}),
+        }
+    )
+    assert patched["statusCode"] == 200
+    patched_body = json.loads(patched["body"])
+    assert patched_body["admin"]["review_completions"] == {
+        "ati_flag": True,
+        "security_flag": False,
+        "integration_flag": False,
+    }

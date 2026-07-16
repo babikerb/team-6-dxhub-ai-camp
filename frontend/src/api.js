@@ -118,3 +118,25 @@ export async function matchSoftware(softwareName, useDescription, catalog) {
     }),
   });
 }
+
+/**
+ * GET /requests/{id}/review-docs — fetch review documents for a request.
+ *
+ * Returns:
+ * {
+ *   request_id: string,
+ *   review_docs: {
+ *     ati:         { status: "pending"|"complete"|"no_docs", message: string|null, files: [{name, url}] },
+ *     itso:        { ... },
+ *     integration: { ... }
+ *   }
+ * }
+ *
+ * status meanings:
+ *   "pending"  — no upload has happened yet; message = "Review in progress, gathering documents"
+ *   "complete" — files present; follow the presigned URLs in files[]
+ *   "no_docs"  — upload event fired but no files found; message describes next step
+ */
+export async function getReviewDocs(requestId) {
+  return request(`/requests/${encodeURIComponent(requestId)}/review-docs`);
+}

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
-import { listRequests } from "../../api.js";
+import { listRequests, getReviewDocs } from "../../api.js";
 import RequestDetail from "./RequestDetail.jsx";
-import { STATUS_ORDER, STATUS_LABELS, statusColor, statusLabel } from "./statusConfig.js";
+import { STATUS_ORDER, STATUS_LABELS, statusLabel } from "./statusConfig.js";
 import { effectiveFlags } from "./flagsUtil.js";
 
 // ── Design tokens (matches RequesterChat.jsx / IntakeForm.jsx palette + type system) ──
@@ -28,37 +28,157 @@ function riskColor(level) {
   return C.stone;
 }
 
-function FlagPill({ value, label, overridden }) {
+const GREEN = "#2E7D32"; // review completed
+
+function FlagPill({ value, label, overridden, completed }) {
   const active = value === true;
+  const done = active && completed;
+  const state = !active
+    ? "Not flagged — no review required"
+    : done
+    ? "Review completed"
+    : "Review remaining";
   return (
     <span
-      title={overridden ? "Staff override in effect" : undefined}
+      data-testid="flag-pill"
+      title={overridden ? `${state} (staff override in effect)` : state}
+      aria-label={overridden ? `${label}: ${state} (staff override in effect)` : `${label}: ${state}`}
       style={{
-        display: "inline-block",
-        padding: "2px 8px",
-        borderRadius: "3px",
+        position: "relative",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "3px",
+        minWidth: "48px",
+        boxSizing: "border-box",
+        padding: active ? "3px 8px" : "2px 7px",
+        borderRadius: "999px",
         fontFamily: C.mono,
         fontSize: "10.5px",
         fontWeight: 700,
-        letterSpacing: "0.04em",
-        background: active ? C.red : "transparent",
-        color: active ? C.white : C.stoneLight,
-        border: active ? "none" : `1px solid ${C.line}`,
-        boxShadow: overridden ? `0 0 0 1.5px ${C.ink}` : "none",
-        marginRight: "4px",
+        letterSpacing: "0.03em",
+        lineHeight: 1.3,
+        background: done ? GREEN : active ? C.red : "transparent",
+        // C.stone (not C.stoneLight) so muted labels still clear WCAG AA
+        // (~5.3:1 on white) — stoneLight measured ~2.1:1 and failed review.
+        color: active ? C.white : C.stone,
+        border: active ? "none" : `1px dashed ${C.stone}`,
       }}
     >
-      {label}
-      {overridden && "*"}
+      {done && (
+        <span aria-hidden="true" style={{ fontSize: "9px", lineHeight: 1 }}>
+          ✓
+        </span>
+      )}
+      <span>{label}</span>
+      {overridden && (
+        // Corner badge instead of a box-shadow ring — a ring around an
+        // already-colored pill read as a focus outline in review, not an
+        // intentional "staff edited this" affordance.
+        <span
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            top: "-6px",
+            right: "-6px",
+            width: "13px",
+            height: "13px",
+            borderRadius: "50%",
+            background: C.ink,
+            color: C.white,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: "8px",
+            lineHeight: 1,
+            border: `1.5px solid ${C.white}`,
+          }}
+        >
+          ✎
+        </span>
+      )}
     </span>
   );
 }
 
+function LegendItem({ swatch, children }) {
+  return (
+    <span style={styles.legendItem}>
+      {swatch && <span style={{ ...styles.legendSwatch, ...swatch }} />}
+      {children}
+    </span>
+  );
+}
+
+function Legend() {
+  return (
+    <div style={styles.legend} aria-label="Color legend">
+      <span style={styles.legendGroupLabel}>Flags:</span>
+      <LegendItem swatch={{ background: "transparent", border: `1px dashed ${C.stone}` }}>
+        Not flagged
+      </LegendItem>
+      <LegendItem swatch={{ background: C.red }}>Review remaining</LegendItem>
+      <LegendItem swatch={{ background: GREEN }}>Review completed</LegendItem>
+      <LegendItem>* Staff override</LegendItem>
+      <span style={styles.legendGroupLabel}>Risk:</span>
+      <LegendItem swatch={{ background: C.red }}>High</LegendItem>
+      <LegendItem swatch={{ background: "#B5650B" }}>Medium</LegendItem>
+      <LegendItem swatch={{ background: C.stone }}>Low</LegendItem>
+    </div>
+  );
+}
+
+// ── Sorting ───────────────────────────────────────────────────────────────────
+
+const RISK_RANK = { High: 0, Medium: 1, Low: 2 }; // missing/"Pending" sorts last
+
+function createdAtMs(r) {
+  const t = Date.parse(r.created_at);
+  return Number.isNaN(t) ? 0 : t;
+}
+
+// Empty values sort last regardless of direction.
+function compareText(a, b) {
+  const ta = (a || "").trim();
+  const tb = (b || "").trim();
+  if (!ta && !tb) return 0;
+  if (!ta) return 1;
+  if (!tb) return -1;
+  return ta.localeCompare(tb);
+}
+
+const SORT_COMPARATORS = {
+  newest: (a, b) => createdAtMs(b) - createdAtMs(a),
+  oldest: (a, b) => createdAtMs(a) - createdAtMs(b),
+  risk: (a, b) =>
+    (RISK_RANK[emptyFlags(a.flags).risk_level] ?? 3) -
+      (RISK_RANK[emptyFlags(b.flags).risk_level] ?? 3) ||
+    createdAtMs(b) - createdAtMs(a),
+  department: (a, b) =>
+    compareText(emptyRequestor(a.requestor).department, emptyRequestor(b.requestor).department) ||
+    createdAtMs(b) - createdAtMs(a),
+  software: (a, b) =>
+    compareText(
+      emptyRequestor(a.requestor).software_name,
+      emptyRequestor(b.requestor).software_name
+    ) || createdAtMs(b) - createdAtMs(a),
+};
+
+const SORT_OPTIONS = [
+  ["newest", "Sort: Newest first"],
+  ["oldest", "Sort: Oldest first"],
+  ["risk", "Sort: Risk (High → Low)"],
+  ["department", "Sort: Department (A–Z)"],
+  ["software", "Sort: Software name (A–Z)"],
+];
+
 function Badge({ label, color }) {
   return (
     <span
+      title={label}
       style={{
         display: "inline-block",
+        maxWidth: "100%",
         padding: "3px 10px",
         borderRadius: "3px",
         fontFamily: C.mono,
@@ -68,6 +188,11 @@ function Badge({ label, color }) {
         textTransform: "uppercase",
         background: color,
         color: C.white,
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        boxSizing: "border-box",
+        verticalAlign: "top",
       }}
     >
       {label}
@@ -83,6 +208,129 @@ function emptyRequestor(requestor) {
   return requestor && typeof requestor === "object" ? requestor : {};
 }
 
+// ── Review document cell ──────────────────────────────────────────────────────
+// One line per review type (ATI / ITSO / INT, plus AI once the backend sends
+// it) so the column never grows past 4 lines regardless of file count.
+const reviewDocStyles = {
+  row: {
+    display: "flex",
+    alignItems: "center",
+    gap: "5px",
+    lineHeight: "1.5",
+  },
+  label: {
+    fontFamily: C.mono,
+    fontSize: "10.5px",
+    fontWeight: 700,
+    letterSpacing: "0.04em",
+    color: C.stone,
+    flexShrink: 0,
+    width: "34px",
+    whiteSpace: "nowrap",
+  },
+  pendingText: {
+    fontFamily: C.mono,
+    fontSize: "10.5px",
+    color: C.stoneLight,
+    fontStyle: "italic",
+  },
+  noDocsText: {
+    fontFamily: C.mono,
+    fontSize: "10.5px",
+    color: "#B5650B",
+    fontStyle: "italic",
+  },
+  link: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "3px",
+    fontFamily: C.mono,
+    fontSize: "10.5px",
+    fontWeight: 600,
+    color: C.red,
+    textDecoration: "none",
+    minWidth: 0,
+  },
+  linkText: {
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    maxWidth: "150px",
+  },
+};
+
+function ReviewDocFileLink({ file }) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <a
+      href={file.url}
+      download={file.name}
+      target="_blank"
+      rel="noreferrer"
+      aria-label={`Download ${file.name}`}
+      title={`Download ${file.name}`}
+      style={{
+        ...reviewDocStyles.link,
+        textDecoration: hovered ? "underline" : "none",
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <span style={reviewDocStyles.linkText}>{file.name}</span>
+      <span aria-hidden="true">↓</span>
+    </a>
+  );
+}
+
+function ReviewDocLine({ label, reviewSection }) {
+  if (!reviewSection || reviewSection.status === "pending") {
+    return (
+      <div style={reviewDocStyles.row}>
+        <span style={reviewDocStyles.label}>{label}:</span>
+        <span
+          style={reviewDocStyles.pendingText}
+          title="Review in progress, gathering documents"
+        >
+          pending
+        </span>
+      </div>
+    );
+  }
+
+  const { status, message, files = [] } = reviewSection;
+
+  if (status === "no_docs" || files.length === 0) {
+    return (
+      <div style={reviewDocStyles.row}>
+        <span style={reviewDocStyles.label}>{label}:</span>
+        <span style={reviewDocStyles.noDocsText} title={message}>
+          no docs
+        </span>
+      </div>
+    );
+  }
+
+  // status === "complete" with at least one file — one line per review type,
+  // so only the first file gets a link here (full list lives in the detail panel).
+  return (
+    <div style={reviewDocStyles.row}>
+      <span style={reviewDocStyles.label}>{label}:</span>
+      <ReviewDocFileLink file={files[0]} />
+    </div>
+  );
+}
+
+function ReviewDocsCell({ reviewDocs }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
+      <ReviewDocLine label="ATI" reviewSection={reviewDocs?.ati} />
+      <ReviewDocLine label="ITSO" reviewSection={reviewDocs?.itso} />
+      <ReviewDocLine label="INT" reviewSection={reviewDocs?.integration} />
+      {reviewDocs?.ai && <ReviewDocLine label="AI" reviewSection={reviewDocs.ai} />}
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function AdminDashboard() {
   const [requests, setRequests] = useState([]);
@@ -90,29 +338,63 @@ export default function AdminDashboard() {
   const [error, setError] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [hoveredId, setHoveredId] = useState(null);
+  // reviewDocs: { [request_id]: { ati, itso, integration } }
+  // Populated by parallel GET /review-docs calls after the request list loads.
+  const [reviewDocs, setReviewDocs] = useState({});
 
   const [filterStatus, setFilterStatus] = useState("");
   const [filterFlag, setFilterFlag] = useState("");
   const [filterDept, setFilterDept] = useState("");
   const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState("newest");
 
-  const loadRequests = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  // silent = background poll: no loading state, and a transient failure
+  // must never wipe the rows already on screen.
+  const loadRequests = useCallback(async (silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       const data = await listRequests();
-      setRequests(Array.isArray(data.items) ? data.items : []);
+      const items = Array.isArray(data.items) ? data.items : [];
+      setRequests(items);
+      setError(null);
+      // Table renders now — review-doc status (one S3/Dynamo lookup per
+      // request) loads separately below so it never delays the initial render.
+      if (!silent) setLoading(false);
+
+      // Failures per-request are swallowed so one bad item can't break the table.
+      const results = await Promise.allSettled(
+        items.map((r) => getReviewDocs(r.request_id))
+      );
+      const docsMap = {};
+      results.forEach((result, i) => {
+        if (result.status === "fulfilled") {
+          docsMap[items[i].request_id] = result.value.review_docs;
+        }
+      });
+      setReviewDocs(docsMap);
     } catch (err) {
-      setError(err.message || "Could not load requests.");
-      setRequests([]);
-    } finally {
-      setLoading(false);
+      if (!silent) {
+        setError(err.message || "Could not load requests.");
+        setRequests([]);
+        setLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
     loadRequests();
   }, [loadRequests]);
+
+  // Keep the list fresh without manual refreshes; paused while the edit
+  // panel is open so the record being edited isn't swapped underneath it.
+  useEffect(() => {
+    if (selectedId !== null) return undefined;
+    const timer = setInterval(() => loadRequests(true), 15000);
+    return () => clearInterval(timer);
+  }, [selectedId, loadRequests]);
 
   const departments = [
     ...new Set(
@@ -148,6 +430,8 @@ export default function AdminDashboard() {
     return true;
   });
 
+  const sorted = [...filtered].sort(SORT_COMPARATORS[sortBy] || SORT_COMPARATORS.newest);
+
   // Refresh a request in the list but keep the detail panel open. Used by
   // in-panel work (retrieving ATI documents, generating the draft review),
   // where closing the panel would throw the reviewer out mid-task.
@@ -155,6 +439,12 @@ export default function AdminDashboard() {
     setRequests((prev) =>
       prev.map((r) => (r.request_id === updatedRequest.request_id ? updatedRequest : r))
     );
+    // Re-fetch live review docs for the updated request so the table stays current.
+    getReviewDocs(updatedRequest.request_id)
+      .then((data) =>
+        setReviewDocs((prev) => ({ ...prev, [updatedRequest.request_id]: data.review_docs }))
+      )
+      .catch(() => {}); // best-effort
   }
 
   function handleSaved(updatedRequest) {
@@ -176,7 +466,7 @@ export default function AdminDashboard() {
         <button
           type="button"
           style={styles.refreshButton}
-          onClick={loadRequests}
+          onClick={() => loadRequests()}
           disabled={loading}
           aria-label="Refresh requests"
         >
@@ -216,7 +506,7 @@ export default function AdminDashboard() {
           >
             <option value="">All flags</option>
             <option value="ati">ATI flagged</option>
-            <option value="security">Security flagged</option>
+            <option value="security">ITSO flagged</option>
             <option value="integration">Integration flagged</option>
             <option value="ai">AI / ADS flagged</option>
           </select>
@@ -231,6 +521,19 @@ export default function AdminDashboard() {
             {departments.map((d) => (
               <option key={d} value={d}>
                 {d}
+              </option>
+            ))}
+          </select>
+
+          <select
+            style={styles.select}
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value)}
+            aria-label="Sort by"
+          >
+            {SORT_OPTIONS.map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
               </option>
             ))}
           </select>
@@ -259,34 +562,47 @@ export default function AdminDashboard() {
           </div>
         )}
 
-        <div style={styles.resultCount}>
-          {loading
-            ? "Loading requests…"
-            : `${filtered.length} request${filtered.length !== 1 ? "s" : ""}`}
+        <div style={styles.resultCountRow}>
+          <div style={styles.resultCount}>
+            {loading
+              ? "Loading requests…"
+              : `${filtered.length} request${filtered.length !== 1 ? "s" : ""}`}
+          </div>
+          <Legend />
         </div>
 
         <div style={styles.tableWrapper}>
           <table style={styles.table}>
+            <colgroup>
+              <col style={{ width: "15%" }} />
+              <col style={{ width: "12%" }} />
+              <col style={{ width: "12%" }} />
+              <col style={{ width: "19%" }} />
+              <col style={{ width: "17%" }} />
+              <col style={{ width: "11%" }} />
+              <col style={{ width: "14%" }} />
+            </colgroup>
             <thead>
               <tr>
                 <th style={styles.th}>Software</th>
                 <th style={styles.th}>Requestor</th>
                 <th style={styles.th}>Department</th>
                 <th style={styles.th}>Status</th>
-                <th style={styles.th}>Flags</th>
+                <th style={{ ...styles.th, paddingLeft: "24px" }}>Flags</th>
                 <th style={styles.th}>Risk</th>
+                <th style={styles.th}>Review Docs</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} style={styles.emptyCell}>
+                  <td colSpan={7} style={styles.emptyCell}>
                     Loading…
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={6} style={styles.emptyCell}>
+                  <td colSpan={7} style={styles.emptyCell}>
                     {error
                       ? "Unable to load requests."
                       : requests.length === 0
@@ -295,11 +611,15 @@ export default function AdminDashboard() {
                   </td>
                 </tr>
               ) : (
-                filtered.map((r) => {
+                sorted.map((r) => {
                   const requestor = emptyRequestor(r.requestor);
                   const flags = emptyFlags(r.flags);
                   const effective = effectiveFlags(flags, r.admin);
                   const active = selectedId === r.request_id || hoveredId === r.request_id;
+                  // Use live review-docs data fetched from the endpoint; fall
+                  // back to whatever is on the DynamoDB record if the fetch
+                  // hasn't completed yet or failed for this request.
+                  const liveReviewDocs = reviewDocs[r.request_id] || r.review_docs || {};
                   return (
                     <tr
                       key={r.request_id}
@@ -325,13 +645,17 @@ export default function AdminDashboard() {
                       </td>
                       <td style={styles.td}>{requestor.department || "—"}</td>
                       <td style={styles.td}>
-                        <Badge label={statusLabel(r.status)} color={statusColor(r.status)} />
+                        {/* One neutral color on purpose — the label text carries the
+                            meaning; color stays reserved for Flags and Risk. */}
+                        <Badge label={statusLabel(r.status)} color="var(--stone)" />
                       </td>
-                      <td style={styles.td}>
-                        <FlagPill value={effective.ati.value} overridden={effective.ati.overridden} label="ATI" />
-                        <FlagPill value={effective.security.value} overridden={effective.security.overridden} label="SEC" />
-                        <FlagPill value={effective.integration.value} overridden={effective.integration.overridden} label="INT" />
-                        <FlagPill value={effective.ai.value} overridden={effective.ai.overridden} label="AI" />
+                      <td style={{ ...styles.td, paddingLeft: "24px" }}>
+                        <div style={styles.flagsRow}>
+                          <FlagPill value={effective.ati.value} overridden={effective.ati.overridden} completed={effective.ati.completed} label="ATI" />
+                          <FlagPill value={effective.security.value} overridden={effective.security.overridden} completed={effective.security.completed} label="ITSO" />
+                          <FlagPill value={effective.integration.value} overridden={effective.integration.overridden} completed={effective.integration.completed} label="INT" />
+                          <FlagPill value={effective.ai.value} overridden={effective.ai.overridden} completed={effective.ai.completed} label="AI" />
+                        </div>
                       </td>
                       <td style={styles.td}>
                         {flags.risk_level ? (
@@ -342,6 +666,9 @@ export default function AdminDashboard() {
                         ) : (
                           <span style={{ color: C.stone, fontSize: "12px" }}>Pending</span>
                         )}
+                      </td>
+                      <td style={styles.td} onClick={(e) => e.stopPropagation()}>
+                        <ReviewDocsCell reviewDocs={liveReviewDocs} />
                       </td>
                     </tr>
                   );
@@ -376,6 +703,9 @@ const styles = {
     gap: "14px",
     padding: "18px 28px",
     background: C.ink,
+    position: "sticky",
+    top: 0,
+    zIndex: 1,
   },
   headerBadge: {
     background: C.red,
@@ -415,7 +745,7 @@ const styles = {
   },
   body: {
     padding: "28px",
-    maxWidth: "1140px",
+    maxWidth: "1400px",
     margin: "0 auto",
   },
   filterBar: {
@@ -479,22 +809,61 @@ const styles = {
     fontWeight: 700,
     fontFamily: C.sans,
   },
+  resultCountRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: "10px",
+    marginBottom: "10px",
+  },
   resultCount: {
     fontFamily: C.mono,
     fontSize: "11.5px",
     color: C.stone,
     letterSpacing: "0.02em",
-    marginBottom: "10px",
+  },
+  legend: {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: "10px",
+    fontFamily: C.mono,
+    fontSize: "10.5px",
+    color: C.stone,
+  },
+  legendGroupLabel: {
+    fontWeight: 700,
+    textTransform: "uppercase",
+    letterSpacing: "0.05em",
+    fontSize: "9.5px",
+    color: C.ink,
+  },
+  legendItem: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    whiteSpace: "nowrap",
+  },
+  legendSwatch: {
+    display: "inline-block",
+    width: "10px",
+    height: "10px",
+    borderRadius: "5px",
+    boxSizing: "border-box",
   },
   tableWrapper: {
     background: C.white,
     border: `1px solid ${C.line}`,
     borderRadius: "10px",
     boxShadow: "0 1px 2px rgba(0,0,0,0.04), 0 12px 32px rgba(0,0,0,0.08)",
-    overflow: "hidden",
+    overflowX: "auto",
+    // Keep the rounded corners visible while still clipping the scrollable area.
+    WebkitOverflowScrolling: "touch",
   },
   table: {
     width: "100%",
+    tableLayout: "fixed",
     borderCollapse: "collapse",
   },
   th: {
@@ -519,12 +888,19 @@ const styles = {
     fontSize: "13px",
     color: C.ink,
     verticalAlign: "top",
+    overflowWrap: "break-word",
   },
   tdSub: {
     fontFamily: C.mono,
     fontSize: "11px",
     color: C.stone,
     marginTop: "2px",
+  },
+  flagsRow: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, max-content)",
+    gap: "6px 8px",
+    alignItems: "center",
   },
   emptyCell: {
     padding: "40px",

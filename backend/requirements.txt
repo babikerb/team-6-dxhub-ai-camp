@@ -15,6 +15,9 @@ fastapi==0.139.0
 uvicorn==0.51.0
 pydantic==2.13.4
 
+# Loads backend/api/.env (TABLE_NAME, REVIEW_DOCS_BUCKET, region) in local dev.
+python-dotenv==1.0.1
+
 # Amazon Bedrock (chatbot parsing, clarification, identification, matching)
 boto3==1.43.48
 

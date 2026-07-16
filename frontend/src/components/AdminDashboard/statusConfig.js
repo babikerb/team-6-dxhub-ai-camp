@@ -6,11 +6,12 @@
 // Workflow-v2.pdf): Submit -> IT Services & Support triage -> Additional
 // Review -> Approved / Denied.
 //
-// ATI, Security, and Integration review run independently and in parallel
+// ATI, ITSO, and Integration review run independently and in parallel
 // (per the real workflow), not one after another -- so they're represented
 // as a single "AdditionalReview" status, not three sequential ones. Which
 // specific review(s) apply to a request is tracked by its
 // ati_flag/security_flag/integration_flag, not by status.
+// (ITSO is the security review; its data key remains security_flag.)
 
 export const STATUS_ORDER = [
   "Submitted",
@@ -44,7 +45,7 @@ export const STATUS_DESCRIPTIONS = {
   ITReview:
     "Chatbot interview complete — flags computed. IT Services & Support is triaging before routing to additional review.",
   AdditionalReview:
-    "With ATI, Security, and/or Integration reviewers — these run independently and in parallel, not one after another. See Computed Flags below for which apply.",
+    "With ATI, ITSO, and/or Integration reviewers — these run independently and in parallel, not one after another. See Computed Flags below for which apply.",
   Approved:
     "IT review passed. Request proceeds to Procurement outside this system.",
   Denied:
@@ -55,7 +56,7 @@ export const STATUS_DESCRIPTIONS = {
 export const STATUS_REQUESTER_LABELS = {
   Submitted: "Submitted",
   ITReview: "Being triaged by IT Services & Support",
-  AdditionalReview: "In additional review (ATI / Security / Integration)",
+  AdditionalReview: "In additional review (ATI / ITSO / Integration)",
   Approved: "Approved — proceeding to procurement",
   Denied: "Denied",
 };

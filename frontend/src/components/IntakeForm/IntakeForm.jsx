@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useLayoutEffect } from "react";
 import { createRequest, matchSoftware, identifySoftware } from "./api.js";
 import { matchCatalog, SDSU_CATALOG } from "./catalog.js";
 
@@ -49,7 +49,7 @@ const SECTIONS = [
     fields: [
       { id: "software_name", label: "Requested software name", type: "text", required: true, placeholder: "e.g. Adobe Creative Cloud" },
       { id: "use_description", label: "What will the technology be used for? Brief explanation.", type: "textarea", required: true, placeholder: "Briefly describe the use case..." },
-      { id: "vendor_website", label: "Enter the vendor's website", type: "text", required: true, placeholder: "https://vendor.com" },
+      { id: "vendor_website", label: "Enter the vendor's website", type: "text", required: true, placeholder: "vendor.com" },
     ],
   },
   {
@@ -149,7 +149,41 @@ function stepIndexForField(fieldId) {
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const URL_RE = /^https?:\/\/[^\s]+\.[^\s]+$/i;
+const PROTOCOL_RE = /^https?:\/\//i;
+const DOMAIN_RE = /^[^\s]+\.[^\s]+$/;
+
+// The vendor website field shows a fixed "https://" prefix, so the stored value is
+// always just the bit after it — strip any protocol a user types or pastes so it
+// doesn't end up duplicated (e.g. pasting "https://vendor.com" shouldn't become
+// "https://https://vendor.com").
+function stripProtocol(value) {
+  return value.replace(PROTOCOL_RE, "");
+}
+
+// The phone field stores raw digits (max 10) and displays them inside a fixed
+// "(XXX) XXX-XXXX" mask, so the parens/dash skeleton is visible even before typing.
+function stripPhoneDigits(value) {
+  return value.replace(/\D/g, "").slice(0, 10);
+}
+
+function formatPhoneMask(digits) {
+  const area = digits.slice(0, 3).padEnd(3, " ");
+  const prefix = digits.slice(3, 6).padEnd(3, " ");
+  const line = digits.slice(6, 10).padEnd(4, " ");
+  return `(${area}) ${prefix}-${line}`;
+}
+
+// Index within "(XXX) XXX-XXXX" that each of the 10 digit slots lands on, in order.
+// Used to put the cursor right after the digit a user just typed/deleted instead of
+// letting it snap to the end of the field on every keystroke (a controlled input's
+// default behavior whenever its `value` is reassigned programmatically).
+const PHONE_DIGIT_SLOTS = [1, 2, 3, 6, 7, 8, 10, 11, 12, 13];
+
+function cursorPosForDigitCount(count) {
+  if (count <= 0) return 1;
+  if (count >= PHONE_DIGIT_SLOTS.length) return 14;
+  return PHONE_DIGIT_SLOTS[count - 1] + 1;
+}
 
 function initialFormState() {
   const state = {};
@@ -175,8 +209,8 @@ function fieldError(field, form) {
   if (field.id === "requested_for_email" && value && !EMAIL_RE.test(value.trim())) {
     return "Enter a valid email address.";
   }
-  if (field.id === "vendor_website" && value && !URL_RE.test(value.trim())) {
-    return "Enter a valid URL (e.g. https://vendor.com).";
+  if (field.id === "vendor_website" && value && !DOMAIN_RE.test(value.trim())) {
+    return "Enter a valid URL (e.g. vendor.com).";
   }
   if (field.id === "estimated_spend" && value !== "") {
     const n = Number(value);
@@ -205,20 +239,22 @@ function formatValue(field, value) {
     return opt ? opt.label : "—";
   }
   if (value === "" || value === undefined || value === null) return "—";
+  if (field.id === "vendor_website") return `https://${value}`;
+  if (field.id === "requested_for_phone") return formatPhoneMask(value).trimEnd();
   return String(value);
 }
 
 function buildRequestor(form) {
   return {
     requested_for_name: form.requested_for_name.trim(),
-    requested_for_phone: form.requested_for_phone.trim(),
+    requested_for_phone: formatPhoneMask(form.requested_for_phone).trimEnd(),
     requested_for_email: form.requested_for_email.trim(),
     department: form.department.trim(),
     user_types: form.user_types,
     scope_of_usage: form.scope_of_usage,
     software_name: form.software_name.trim(),
     use_description: form.use_description.trim(),
-    vendor_website: form.vendor_website.trim(),
+    vendor_website: form.vendor_website.trim() ? `https://${form.vendor_website.trim()}` : "",
     software_term: form.software_term,
     estimated_spend: Number(form.estimated_spend),
     purchase_type: form.purchase_type,
@@ -290,6 +326,31 @@ function IntakeForm({ onSubmitted }) {
   const [requestId, setRequestId] = useState(null);
   const [copied, setCopied] = useState(false);
 
+  const phoneInputRef = useRef(null);
+  const phoneCursorRef = useRef(null);
+
+  // Restore the cursor position computed in handlePhoneChange after the reformatted
+  // value renders — without this, resetting a controlled input's `value` snaps the
+  // cursor to the end on every keystroke, making it impossible to edit mid-number.
+  useLayoutEffect(() => {
+    if (phoneCursorRef.current !== null && phoneInputRef.current) {
+      const pos = phoneCursorRef.current;
+      phoneInputRef.current.setSelectionRange(pos, pos);
+      phoneCursorRef.current = null;
+    }
+  });
+
+  function handlePhoneChange(e) {
+    const el = e.target;
+    const raw = el.value;
+    const cursor = el.selectionStart ?? raw.length;
+    const digitsBeforeCursor = (raw.slice(0, cursor).match(/\d/g) || []).length;
+    const newDigits = stripPhoneDigits(raw);
+    const digitCount = Math.min(digitsBeforeCursor, newDigits.length);
+    phoneCursorRef.current = newDigits.length === 0 ? 0 : cursorPosForDigitCount(digitCount);
+    setField("requested_for_phone", raw);
+  }
+
   function clearError(id) {
     setErrors((e) => {
       if (!e[id]) return e;
@@ -300,7 +361,10 @@ function IntakeForm({ onSubmitted }) {
   }
 
   function setField(id, value) {
-    setForm((f) => ({ ...f, [id]: value }));
+    let next = value;
+    if (id === "vendor_website") next = stripProtocol(value);
+    else if (id === "requested_for_phone") next = stripPhoneDigits(value);
+    setForm((f) => ({ ...f, [id]: next }));
     clearError(id);
     // Editing the name invalidates any confirmation of the old one.
     if (id === "software_name") {
@@ -547,6 +611,35 @@ function IntakeForm({ onSubmitted }) {
         />
       );
     }
+    if (field.id === "requested_for_phone") {
+      return (
+        <input
+          id={`field-${field.id}`}
+          ref={phoneInputRef}
+          style={styles.input}
+          type="tel"
+          inputMode="numeric"
+          value={value ? formatPhoneMask(value) : ""}
+          placeholder={formatPhoneMask("")}
+          onChange={handlePhoneChange}
+        />
+      );
+    }
+    if (field.id === "vendor_website") {
+      return (
+        <div style={styles.urlInputWrap}>
+          <span style={styles.urlPrefix}>https://</span>
+          <input
+            id={`field-${field.id}`}
+            style={styles.urlInput}
+            type="text"
+            value={value}
+            placeholder={field.placeholder}
+            onChange={(e) => setField(field.id, e.target.value)}
+          />
+        </div>
+      );
+    }
     return (
       <input
         id={`field-${field.id}`}
@@ -571,7 +664,7 @@ function IntakeForm({ onSubmitted }) {
         </div>
         <div style={styles.dotsWrap}>
           {STEPS.map((s, i) => (
-            <div key={s.title + i} style={styles.dotUnit}>
+            <div key={s.title + i} style={{ ...styles.dotUnit, flex: i < STEPS.length - 1 ? 1 : "0 0 auto" }}>
               <div
                 style={{
                   ...styles.dot,
@@ -769,21 +862,26 @@ function IntakeForm({ onSubmitted }) {
         <div style={styles.catalogHeading}>Review your answers</div>
         <div style={styles.catalogSubheading}>Check everything below, then continue. Use Edit to change any answer.</div>
 
-        {SECTIONS.map((section) => (
-          <div key={section.title} style={styles.reviewSection}>
-            <div style={styles.sectionTitle}>{section.title}</div>
-            {section.fields.map((field) => (
-              <div key={field.id} style={styles.reviewRow}>
-                <div style={styles.reviewText}>
-                  <div style={styles.reviewLabel}>{field.label}</div>
-                  <div style={styles.reviewValue}>{formatValue(field, form[field.id])}</div>
-                  {errors[field.id] && <div style={styles.error}>{errors[field.id]}</div>}
+        {STEPS.map((step, stepIdx) => (
+          <div key={step.title + stepIdx} style={styles.reviewSection}>
+            <div style={styles.reviewSectionHeader}>
+              <div style={styles.sectionTitle}>{step.title}</div>
+              <button type="button" style={styles.editLink} onClick={() => goToStep(stepIdx)}>
+                Edit
+              </button>
+            </div>
+            {step.fields.map((fieldId) => {
+              const field = FIELD_MAP[fieldId];
+              return (
+                <div key={field.id} style={styles.reviewRow}>
+                  <div style={styles.reviewText}>
+                    <div style={styles.reviewLabel}>{field.label}</div>
+                    <div style={styles.reviewValue}>{formatValue(field, form[field.id])}</div>
+                    {errors[field.id] && <div style={styles.error}>{errors[field.id]}</div>}
+                  </div>
                 </div>
-                <button type="button" style={styles.editLink} onClick={() => goToStep(stepIndexForField(field.id))}>
-                  Edit
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ))}
 
@@ -851,22 +949,16 @@ function IntakeForm({ onSubmitted }) {
 
 const styles = {
   page: {
-    minHeight: "100vh",
+    height: "100vh",
     display: "flex",
-    justifyContent: "center",
-    alignItems: "flex-start",
-    padding: "40px 20px",
     fontFamily: "'IBM Plex Sans', sans-serif",
     boxSizing: "border-box",
   },
   card: {
     width: "100%",
-    maxWidth: "520px",
+    height: "100%",
     background: "#FFFFFF",
-    border: "1px solid var(--line)",
-    borderRadius: "14px",
-    boxShadow: "0 1px 2px rgba(0,0,0,0.04), 0 16px 40px rgba(0,0,0,0.12)",
-    overflow: "hidden",
+    overflow: "auto",
     display: "flex",
     flexDirection: "column",
   },
@@ -876,6 +968,9 @@ const styles = {
     gap: "14px",
     padding: "18px 24px",
     background: "var(--ink)",
+    position: "sticky",
+    top: 0,
+    zIndex: 1,
   },
   headerBadge: {
     background: "var(--red)",
@@ -960,6 +1055,11 @@ const styles = {
     color: "var(--red)",
     textTransform: "uppercase",
     letterSpacing: "0.08em",
+  },
+  reviewSectionHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
     borderBottom: "1px solid var(--line)",
     paddingBottom: "8px",
   },
@@ -977,6 +1077,32 @@ const styles = {
   input: {
     border: "none",
     borderBottom: "1.5px solid var(--stone-light)",
+    background: "transparent",
+    fontSize: "15px",
+    padding: "6px 2px",
+    outline: "none",
+    boxSizing: "border-box",
+    fontFamily: "'IBM Plex Sans', sans-serif",
+    color: "var(--ink)",
+  },
+  urlInputWrap: {
+    display: "flex",
+    alignItems: "center",
+    borderBottom: "1.5px solid var(--stone-light)",
+    boxSizing: "border-box",
+  },
+  urlPrefix: {
+    fontSize: "15px",
+    padding: "6px 0 6px 2px",
+    color: "var(--stone-light)",
+    fontFamily: "'IBM Plex Sans', sans-serif",
+    userSelect: "none",
+    flexShrink: 0,
+  },
+  urlInput: {
+    flex: 1,
+    minWidth: 0,
+    border: "none",
     background: "transparent",
     fontSize: "15px",
     padding: "6px 2px",
