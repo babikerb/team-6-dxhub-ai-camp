@@ -482,60 +482,7 @@ describe('AdminDashboard — review dashboard buttons', () => {
 });
 
 
-// ── RequestDetail — review documents section ──────────────────────────────────
-
-describe('RequestDetail — review documents section', () => {
-  const noop = vi.fn();
-
-  it('renders the Review Documents section heading', () => {
-    const req = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
-    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
-    expect(screen.getByText('Review Documents')).toBeInTheDocument();
-  });
-
-  it('shows ATI Docs, ITSO Docs, and Integration Docs row labels', () => {
-    const req = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
-    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
-    expect(screen.getByText('ATI Docs')).toBeInTheDocument();
-    expect(screen.getByText('ITSO Docs')).toBeInTheDocument();
-    expect(screen.getByText('Integration Docs')).toBeInTheDocument();
-  });
-
-  it('shows download links for complete ATI docs in the detail panel', () => {
-    const req = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
-    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
-    // bbb-002 has ATI complete with vpat.pdf and privacy_policy.pdf
-    const links = screen.getAllByLabelText(/Download vpat\.pdf/i);
-    expect(links.length).toBeGreaterThanOrEqual(1);
-  });
-
-  it('shows "No documents found" for Integration no_docs in detail panel (bbb-002)', () => {
-    const req = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
-    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
-    expect(screen.getAllByText('No documents found').length).toBeGreaterThan(0);
-  });
-
-  it('shows "Review in progress, gathering documents" for pending type in detail panel', () => {
-    const req = MOCK_REQUESTS.find((r) => r.request_id === 'aaa-001');
-    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
-    const pending = screen.getAllByText('Review in progress, gathering documents');
-    // aaa-001 has all three pending
-    expect(pending.length).toBeGreaterThanOrEqual(3);
-  });
-
-  it('shows "No documents found. Contact vendor" for ITSO no_docs (ccc-003)', () => {
-    const req = MOCK_REQUESTS.find((r) => r.request_id === 'ccc-003');
-    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
-    expect(screen.getAllByText('No documents found. Contact vendor').length).toBeGreaterThan(0);
-  });
-
-  it('shows pending state for all three types when review_docs is absent', () => {
-    const req = {
-      ...MOCK_REQUESTS[0],
-      review_docs: undefined,
-    };
-    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
-    const pending = screen.getAllByText('Review in progress, gathering documents');
-    expect(pending.length).toBeGreaterThanOrEqual(3);
-  });
-});
+// The RequestDetail 'Review Documents' section was removed: the three review
+// dashboards own documents now (ReviewDashboard column 1 lists the same files
+// with downloads AND uploads, which this section never had). Its tests went
+// with it — see 'AdminDashboard — review dashboard buttons' above.

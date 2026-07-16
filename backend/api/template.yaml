@@ -315,6 +315,143 @@ Resources:
             Path: /requests/{id}/review-docs
             Method: GET
 
+  # ── Software identification: "Canva -- online design platform" ──────────────
+  IdentifySoftwareFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ..
+      Handler: api.handlers.chatbot_identify.handler
+      Timeout: 29   # web search + Bedrock; 29 is API Gateway's hard ceiling
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: "*"
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SoftwareRequestsApi
+            Path: /chatbot/identify-software
+            Method: POST
+
+  # ── ATI review step 1: find the vendor's documents ──────────────────────────
+  AtiDocumentsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ..
+      Handler: api.handlers.ati_report.documents_handler
+      Timeout: 29   # a handful of web searches; measured ~9-12s
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SoftwareRequestsTableName
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: "*"
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SoftwareRequestsApi
+            Path: /requests/{id}/ati-documents
+            Method: POST
+
+  # ── ATI review step 2: trigger. Same split as SecurityReportFunction, and for
+  #    the same reason: generation reads the VPAT and calls Bedrock (measured
+  #    126s), far past API Gateway's un-raisable 29s integration timeout. This
+  #    marks pending, fires the worker, and returns 202 immediately.
+  AtiReportFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ..
+      Handler: api.handlers.ati_report.handler
+      Timeout: 10
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SoftwareRequestsTableName
+        - LambdaInvokePolicy:
+            FunctionName: !Ref AtiReportWorkerFunction
+      Environment:
+        Variables:
+          ATI_REPORT_WORKER_FUNCTION_NAME: !Ref AtiReportWorkerFunction
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SoftwareRequestsApi
+            Path: /requests/{id}/ati-report
+            Method: POST
+
+  AtiReportWorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ..
+      Handler: api.handlers.ati_report.worker_handler
+      Timeout: 600   # measured 126s on a real VPAT; headroom for slow vendors
+      MemorySize: 512
+      # No Events -- invoked only via async Lambda "Event" invocation from
+      # AtiReportFunction, never through API Gateway. That's what makes the
+      # long timeout safe.
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SoftwareRequestsTableName
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: "*"
+
+  # ── Reviewer document upload: presigned PUT + confirm ───────────────────────
+  # The browser PUTs straight to S3, so the bytes never cross API Gateway (10MB
+  # payload cap; VPAT PDFs exceed it). This function only signs the URL, but the
+  # signature inherits THIS role's permissions -- so it needs PutObject even
+  # though it never writes an object itself.
+  ReviewUploadUrlFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ..
+      Handler: api.handlers.review_upload.upload_url_handler
+      Timeout: 10
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SoftwareRequestsTableName
+        - Statement:
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub "arn:aws:s3:::${ReviewDocsBucketName}/DataStored/*"
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SoftwareRequestsApi
+            Path: /requests/{id}/review-docs/upload-url
+            Method: POST
+
+  ReviewUploadConfirmFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ..
+      Handler: api.handlers.review_upload.confirm_handler
+      Timeout: 29
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SoftwareRequestsTableName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:ListBucket
+              Resource:
+                - !Sub "arn:aws:s3:::${ReviewDocsBucketName}"
+                - !Sub "arn:aws:s3:::${ReviewDocsBucketName}/DataStored/*"
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SoftwareRequestsApi
+            Path: /requests/{id}/review-docs/confirm
+            Method: POST
+
 Outputs:
   ApiBaseUrl:
     Description: Base URL for the deployed API
