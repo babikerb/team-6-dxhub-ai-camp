@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { MOCK_REQUESTS } from "./mockData.js";
 import RequestDetail from "./RequestDetail.jsx";
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
 // ── Color tokens (matches RequesterChat.jsx palette) ──────────────────────────
 const C = {
@@ -88,9 +90,21 @@ const ALL_STATUSES = [
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function AdminDashboard() {
-  // In Phase 2 swap this for a real fetch from GET /requests
-  const [requests, setRequests] = useState(MOCK_REQUESTS);
+  // Live data from GET /requests (real flags set by the chatbot). Falls back to
+  // the mock list only if the API can't be reached, so the demo isn't blank.
+  const [requests, setRequests] = useState([]);
+  const [usingMock, setUsingMock] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/requests`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((data) => setRequests(Array.isArray(data.items) ? data.items : []))
+      .catch(() => {
+        setRequests(MOCK_REQUESTS);
+        setUsingMock(true);
+      });
+  }, []);
 
   // Filters
   const [filterStatus, setFilterStatus] = useState("");
@@ -98,22 +112,27 @@ export default function AdminDashboard() {
   const [filterDept, setFilterDept] = useState("");
   const [search, setSearch] = useState("");
 
-  const departments = [...new Set(requests.map((r) => r.requestor.department))].sort();
+  const departments = [
+    ...new Set(requests.map((r) => r.requestor?.department).filter(Boolean)),
+  ].sort();
 
   const filtered = requests.filter((r) => {
+    const flags = r.flags || {};
+    const req = r.requestor || {};
     if (filterStatus && r.status !== filterStatus) return false;
     if (filterFlag) {
-      if (filterFlag === "ati" && !r.flags.ati_flag) return false;
-      if (filterFlag === "security" && !r.flags.security_flag) return false;
-      if (filterFlag === "integration" && !r.flags.integration_flag) return false;
+      if (filterFlag === "ati" && !flags.ati_flag) return false;
+      if (filterFlag === "security" && !flags.security_flag) return false;
+      if (filterFlag === "integration" && !flags.integration_flag) return false;
+      if (filterFlag === "ai" && !flags.ai_flag) return false;
     }
-    if (filterDept && r.requestor.department !== filterDept) return false;
+    if (filterDept && req.department !== filterDept) return false;
     if (search) {
       const q = search.toLowerCase();
       if (
-        !r.requestor.software_name.toLowerCase().includes(q) &&
-        !r.requestor.requested_for_name.toLowerCase().includes(q) &&
-        !r.requestor.department.toLowerCase().includes(q)
+        !(req.software_name || "").toLowerCase().includes(q) &&
+        !(req.requested_for_name || "").toLowerCase().includes(q) &&
+        !(req.department || "").toLowerCase().includes(q)
       )
         return false;
     }
@@ -176,6 +195,7 @@ export default function AdminDashboard() {
             <option value="ati">ATI flagged</option>
             <option value="security">Security flagged</option>
             <option value="integration">Integration flagged</option>
+            <option value="ai">AI / ADS flagged</option>
           </select>
 
           <select
@@ -210,6 +230,7 @@ export default function AdminDashboard() {
         {/* ── Results count ── */}
         <div style={styles.resultCount}>
           {filtered.length} request{filtered.length !== 1 ? "s" : ""}
+          {usingMock && " · showing demo data (live API unavailable)"}
         </div>
 
         {/* ── Table ── */}
@@ -244,15 +265,15 @@ export default function AdminDashboard() {
                     onClick={() => setSelectedId(r.request_id)}
                   >
                     <td style={{ ...styles.td, fontWeight: 600 }}>
-                      {r.requestor.software_name}
+                      {r.requestor?.software_name}
                     </td>
                     <td style={styles.td}>
-                      <div>{r.requestor.requested_for_name}</div>
+                      <div>{r.requestor?.requested_for_name}</div>
                       <div style={{ fontSize: "11px", color: C.mutedText }}>
-                        {r.requestor.requested_for_email}
+                        {r.requestor?.requested_for_email}
                       </div>
                     </td>
-                    <td style={styles.td}>{r.requestor.department}</td>
+                    <td style={styles.td}>{r.requestor?.department}</td>
                     <td style={styles.td}>
                       <Badge
                         label={r.status}
@@ -260,14 +281,15 @@ export default function AdminDashboard() {
                       />
                     </td>
                     <td style={styles.td}>
-                      <FlagPill value={r.flags.ati_flag} label="ATI" />
-                      <FlagPill value={r.flags.security_flag} label="SEC" />
-                      <FlagPill value={r.flags.integration_flag} label="INT" />
+                      <FlagPill value={r.flags?.ati_flag} label="ATI" />
+                      <FlagPill value={r.flags?.security_flag} label="SEC" />
+                      <FlagPill value={r.flags?.integration_flag} label="INT" />
+                      <FlagPill value={r.flags?.ai_flag} label="AI" />
                     </td>
                     <td style={styles.td}>
                       <Badge
-                        label={r.flags.risk_level}
-                        color={riskColor(r.flags.risk_level)}
+                        label={r.flags?.risk_level || "—"}
+                        color={riskColor(r.flags?.risk_level)}
                       />
                     </td>
                   </tr>
