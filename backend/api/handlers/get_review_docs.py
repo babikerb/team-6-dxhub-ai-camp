@@ -47,12 +47,12 @@ import os
 import boto3
 from botocore.exceptions import ClientError
 
-from handlers.s3_event_handler import (
+from .s3_event_handler import (
     _ensure_review_docs_exists,
     _update_review_docs,
     list_files,
 )
-from handlers.store import error_response, get_request, response
+from .store import error_response, get_request, response
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

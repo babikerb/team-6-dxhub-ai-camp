@@ -4,35 +4,37 @@
 #   python3 -m venv venv
 #   ./venv/bin/pip install -r requirements.txt
 #
-# Run the local API (AWS_PROFILE must name a profile in ~/.aws/credentials that
-# has Bedrock access; SSO creds expire every 12h and just need re-pasting):
+# Run the local API (AWS_PROFILE must name a profile in ~/.aws/credentials with
+# Bedrock access; SSO creds expire every 12h and just need re-pasting):
 #   cd api
 #   AWS_PROFILE=<your-sso-profile> AWS_DEFAULT_REGION=us-west-2 \
 #     ../venv/bin/python -m uvicorn local_server:app --reload --port 8000
 
-# API
-fastapi==0.139.0
-uvicorn==0.51.0
-pydantic==2.13.4
+# API. Pins match what's deployed — don't bump without checking template.yaml.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
 
-# Loads backend/api/.env (TABLE_NAME, REVIEW_DOCS_BUCKET, region) in local dev.
+# Reads backend/api/.env (TABLE_NAME, REVIEW_DOCS_BUCKET, region). local_server
+# imports this at module scope, so without it the backend won't start at all.
 python-dotenv==1.0.1
 
-# Amazon Bedrock (chatbot parsing, clarification, identification, matching)
-boto3==1.43.48
+# Amazon Bedrock (chatbot parsing/clarification/identification/matching, the
+# security report, the ATI report) + S3 + DynamoDB.
+boto3==1.35.99
 
-# Keyless web search. Required by parse.py's _web_search, which backs vendor
-# document lookup (privacy policy / ToS / VPAT / HECVAT) and software
-# identification. NOTE: _web_search catches ImportError and returns [], so if
-# this is missing those features silently find nothing instead of erroring.
-ddgs==9.14.4
+# Keyless web search, used by parse.py's _web_search: vendor document lookup
+# (privacy policy / ToS / VPAT / HECVAT) and software identification.
+# NOTE: _web_search catches ImportError and returns [], so if this is missing
+# those features silently find nothing instead of failing loudly.
+ddgs>=9.0.0
 
-# Reads VPAT PDFs in ati_report_generator. Without it, PDF VPATs come back as
-# unreadable and the report correctly reports them as located-but-not-reviewed
-# -- accurate, but much less useful. Pin matches mrunal-backend's
-# backend/api/requirements.txt so the two don't diverge before they're merged.
+# Fetching vendor documents over HTTP (security report).
+httpx>=0.28.1
+
+# Reads VPAT PDFs — the ATI report quotes the real conformance tables rather
+# than inferring them from a filename, and the security report reads policies.
 pypdf>=6.0.0
 
-# Reads the internal ServiceNow request export in build_precedent_index.py.
-# Only needed to (re)build the precedent index, not to run the API.
+# Reads the internal ServiceNow export in build_precedent_index.py. Only needed
+# to (re)build the precedent index, not to run the API.
 openpyxl==3.1.5

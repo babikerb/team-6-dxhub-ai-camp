@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { patchAdmin, retrieveAtiDocuments, generateAtiReport, getRequest } from "../../api.js";
+import { useEffect, useRef, useState } from "react";
+import { getRequest, patchAdmin, regenerateSecurityReport } from "../../api.js";
 import { STATUS_ORDER, STATUS_LABELS, STATUS_DESCRIPTIONS } from "./statusConfig.js";
 
 // ── Design tokens (matches RequesterChat.jsx / IntakeForm.jsx palette + type system) ──
@@ -63,170 +63,6 @@ function Field({ label, value }) {
       <span style={styles.fieldLabel}>{label}</span>
       <span style={styles.fieldValue}>{display}</span>
     </div>
-  );
-}
-
-// ── ATI draft review panel ────────────────────────────────────────────────────
-// Two buttons, in order, because the reviewer's own workflow is two steps:
-// find the documents, then review them. On a renewal the first step often
-// answers the question by itself ("same VPAT as last year"), which is why it's
-// separate rather than folded into generation.
-function AtiReviewPanel({ request, onUpdated }) {
-  const ati = request.ati_review || {};
-  const isRenewal = (request.requestor || {}).purchase_type === "renewal";
-  const [busy, setBusy] = useState("");
-  const [error, setError] = useState("");
-
-  const docs = ati.documents || {};
-  const hasDocs = Object.keys(docs).length > 0;
-  const pending = ati.status === "pending" || busy === "report";
-
-  async function handleRetrieve() {
-    setBusy("documents");
-    setError("");
-    try {
-      onUpdated(await retrieveAtiDocuments(request.request_id));
-    } catch (e) {
-      setError(e.message || "Could not retrieve documents.");
-    } finally {
-      setBusy("");
-    }
-  }
-
-  async function handleGenerate() {
-    setBusy("report");
-    setError("");
-    try {
-      await generateAtiReport(request.request_id);
-      // The report reads the VPAT and calls Bedrock — well over a minute in
-      // practice — so poll rather than waiting on the request.
-      for (let i = 0; i < 80; i++) {
-        await new Promise((r) => setTimeout(r, 3000));
-        const fresh = await getRequest(request.request_id);
-        const status = (fresh.ati_review || {}).status;
-        if (status === "complete" || status === "failed") {
-          onUpdated(fresh);
-          if (status === "failed") {
-            setError((fresh.ati_review || {}).error || "Report generation failed.");
-          }
-          return;
-        }
-      }
-      setError("Report is taking longer than expected. Reopen this request to check.");
-    } catch (e) {
-      setError(e.message || "Could not generate the report.");
-    } finally {
-      setBusy("");
-    }
-  }
-
-  return (
-    <Section title="ATI Accessibility Review">
-      {isRenewal && (
-        <div style={styles.renewalNote}>
-          Renewal — SDSU has reviewed this product before. Start with the existing
-          documents; they are often unchanged since the last review.
-        </div>
-      )}
-
-      <div style={styles.atiSteps}>
-        <button
-          type="button"
-          onClick={handleRetrieve}
-          disabled={busy !== ""}
-          style={{ ...styles.atiButton, ...(busy !== "" ? styles.atiButtonDisabled : null) }}
-        >
-          {busy === "documents" ? "Searching…" : "Step 1: Retrieve Existing Documents"}
-        </button>
-        <button
-          type="button"
-          onClick={handleGenerate}
-          disabled={busy !== "" || !hasDocs}
-          title={hasDocs ? "" : "Retrieve the documents first"}
-          style={{
-            ...styles.atiButton,
-            ...styles.atiButtonPrimary,
-            ...(busy !== "" || !hasDocs ? styles.atiButtonDisabled : null),
-          }}
-        >
-          {pending ? "Generating… (up to 2 min)" : "Step 2: Generate Draft ATI Review"}
-        </button>
-      </div>
-
-      {error && <div style={styles.atiError}>{error}</div>}
-
-      {hasDocs && (
-        <div style={styles.atiDocs}>
-          {Object.entries(docs).map(([type, info]) => (
-            <div key={type} style={styles.atiDocRow}>
-              <span style={styles.atiDocLabel}>{type.replace(/_/g, " ")}</span>
-              {info.url ? (
-                <span style={styles.atiDocValue}>
-                  <a href={info.url} target="_blank" rel="noreferrer" style={styles.atiDocLink}>
-                    {info.url.length > 60 ? `${info.url.slice(0, 60)}…` : info.url}
-                  </a>
-                  {/* Whether the text was actually read decides how much the
-                      report below is worth — say it plainly. */}
-                  <span style={styles.atiDocMeta}>
-                    {info.contents_reviewed === true
-                      ? "contents read"
-                      : info.contents_reviewed === false
-                      ? "link only — not read, reviewer must open"
-                      : ""}
-                  </span>
-                </span>
-              ) : (
-                <span style={styles.atiDocMissing}>not found — {info.note || "no public document"}</span>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {ati.status === "complete" && (
-        <div style={styles.atiReport}>
-          <div style={styles.atiRiskRow}>
-            <span style={styles.fieldLabel}>Draft risk tier</span>
-            <span style={{ ...styles.atiRisk, color: riskColor(ati.risk_tier) }}>
-              {ati.risk_tier || "Unknown"}
-            </span>
-            <span style={styles.atiGenerated}>
-              generated {ati.generated_at ? new Date(ati.generated_at).toLocaleString() : ""}
-            </span>
-          </div>
-
-          <div style={styles.atiDraftBanner}>
-            Draft for reviewer edit — not a decision. Phase 4 (hands-on manual testing)
-            is not included and must be performed by a person.
-          </div>
-
-          {(ati.reviewer_actions || []).length > 0 && (
-            <>
-              <div style={styles.atiSubTitle}>What you still need to do</div>
-              <ul style={styles.atiList}>
-                {ati.reviewer_actions.map((a, i) => (
-                  <li key={i} style={styles.atiListItem}>{a}</li>
-                ))}
-              </ul>
-            </>
-          )}
-
-          <div style={styles.atiSubTitle}>Draft review</div>
-          <pre style={styles.atiBody}>{ati.report_body}</pre>
-
-          {ati.draft_message_to_requester && (
-            <>
-              <div style={styles.atiSubTitle}>Draft message to the requester</div>
-              <pre style={styles.atiBody}>{ati.draft_message_to_requester}</pre>
-            </>
-          )}
-
-          {(ati.precedent || {}).found && (
-            <div style={styles.atiPrecedent}>{ati.precedent.summary}</div>
-          )}
-        </div>
-      )}
-    </Section>
   );
 }
 
@@ -334,6 +170,88 @@ function FlagRow({
   );
 }
 
+// ── Security Review risk badge ────────────────────────────────────────────────
+function riskTierColor(tier) {
+  if (tier === "High") return C.red;
+  if (tier === "Medium") return "#B5650B";
+  return C.stone;
+}
+
+const SOURCE_LABELS = {
+  admin_attached: "attached by reviewer",
+  requester_provided: "provided by requester",
+  auto_search: "found via web search",
+  not_found: "not found",
+};
+
+// ── One row in "Sources checked": link + how it was obtained ──────────────────
+function SourceRow({ source }) {
+  const label = source.doc_type.replace(/_/g, " ");
+  return (
+    <div style={styles.field}>
+      <span style={styles.fieldLabel}>{label}</span>
+      <span style={styles.fieldValue}>
+        {source.fetched ? (
+          <a href={source.url} target="_blank" rel="noreferrer" style={{ color: C.red }}>
+            {source.url}
+          </a>
+        ) : (
+          <span style={{ color: C.stoneLight, fontStyle: "italic" }}>
+            {source.url ? "found but could not be fetched" : "not available"}
+          </span>
+        )}
+        <span style={{ marginLeft: "8px", fontSize: "10.5px", color: C.stoneLight }}>
+          ({SOURCE_LABELS[source.source] || source.source})
+        </span>
+      </span>
+    </div>
+  );
+}
+
+const rdStyles = {
+  reviewRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: "12px",
+    padding: "8px 0",
+    borderBottom: "1px solid var(--paper-alt)",
+    fontSize: "13px",
+  },
+  reviewLabel: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "11.5px",
+    color: "var(--stone)",
+    flexShrink: 0,
+    width: "110px",
+    paddingTop: "1px",
+  },
+  reviewContent: {
+    flex: 1,
+    textAlign: "right",
+  },
+  pendingText: {
+    fontSize: "12px",
+    color: "var(--stone-light)",
+    fontStyle: "italic",
+  },
+  noDocsText: {
+    fontSize: "12px",
+    color: "#B5650B",
+    fontStyle: "italic",
+  },
+  downloadLink: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    fontSize: "12px",
+    fontFamily: "'IBM Plex Mono', monospace",
+    color: "var(--red)",
+    textDecoration: "none",
+    fontWeight: 600,
+  },
+};
+
 // ── Review document sub-section ───────────────────────────────────────────────
 // Renders one review type's documents (or its status message) inside the panel.
 function ReviewTypeRow({ label, reviewSection }) {
@@ -384,57 +302,255 @@ function ReviewTypeRow({ label, reviewSection }) {
   );
 }
 
-const rdStyles = {
-  reviewRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: "12px",
-    padding: "8px 0",
-    borderBottom: "1px solid var(--paper-alt)",
-    fontSize: "13px",
-  },
-  reviewLabel: {
-    fontFamily: "'IBM Plex Mono', monospace",
-    fontSize: "11.5px",
-    color: "var(--stone)",
-    flexShrink: 0,
-    width: "110px",
-    paddingTop: "1px",
-  },
-  reviewContent: {
-    flex: 1,
-    textAlign: "right",
-  },
-  pendingText: {
-    fontSize: "12px",
-    color: "var(--stone-light)",
-    fontStyle: "italic",
-  },
-  noDocsText: {
-    fontSize: "12px",
-    color: "#B5650B",
-    fontStyle: "italic",
-  },
-  downloadLink: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "4px",
-    fontSize: "12px",
-    fontFamily: "'IBM Plex Mono', monospace",
-    color: "var(--red)",
-    textDecoration: "none",
-    fontWeight: 600,
-  },
+// ── Attach Documents: reviewer can paste a link the requester didn't provide,
+// or that the report's auto-search couldn't find (HECVAT/SOC 2 are never
+// asked of the requester, only auto-searched — this is the only way to add
+// them). Saved links take priority over requester-provided ones next time
+// the report generates. ─────────────────────────────────────────────────────
+const DOC_TYPE_LABELS = {
+  privacy_policy: "Privacy policy",
+  terms_of_service: "Terms of service",
+  vpat: "VPAT / accessibility doc",
+  hecvat: "HECVAT",
+  soc2: "SOC 2 report",
 };
 
+function AttachDocumentsForm({ attachedDocuments, onSaveAndRegenerate, saving }) {
+  const [urls, setUrls] = useState({
+    privacy_policy: attachedDocuments?.privacy_policy || "",
+    terms_of_service: attachedDocuments?.terms_of_service || "",
+    vpat: attachedDocuments?.vpat || "",
+    hecvat: attachedDocuments?.hecvat || "",
+    soc2: attachedDocuments?.soc2 || "",
+  });
+
+  function setUrl(docType, value) {
+    setUrls((prev) => ({ ...prev, [docType]: value }));
+  }
+
+  function handleSave() {
+    const payload = {};
+    for (const [docType, value] of Object.entries(urls)) {
+      const trimmed = value.trim();
+      payload[docType] = trimmed === "" ? null : trimmed;
+    }
+    onSaveAndRegenerate(payload);
+  }
+
+  return (
+    <div style={{ marginBottom: "18px" }}>
+      <div style={styles.formLabel}>Attach documents (optional)</div>
+      <div style={{ ...styles.overrideNote, marginBottom: "10px" }}>
+        Paste a link for anything the requester didn't provide, or that the automatic search
+        couldn't find — HECVAT and SOC 2 are never asked of the requester, only searched for.
+        Saved links are used the next time the report generates.
+      </div>
+      {Object.entries(DOC_TYPE_LABELS).map(([docType, label]) => (
+        <div key={docType} style={{ marginBottom: "8px" }}>
+          <label style={{ ...styles.formLabel, marginTop: 0 }}>{label}</label>
+          <input
+            style={styles.input}
+            type="text"
+            placeholder="https://..."
+            value={urls[docType]}
+            onChange={(e) => setUrl(docType, e.target.value)}
+            disabled={saving}
+          />
+        </div>
+      ))}
+      <button
+        style={{ ...styles.saveButton, opacity: saving ? 0.7 : 1 }}
+        onClick={handleSave}
+        disabled={saving}
+        type="button"
+      >
+        {saving ? "Saving…" : "Save & Regenerate"}
+      </button>
+    </div>
+  );
+}
+
+// ── Security Review panel: shown only when flags.security_flag is true ────────
+function SecurityReviewPanel({ securityReview, attachedDocuments, generating, onRegenerate, onSaveAndRegenerate }) {
+  const [copied, setCopied] = useState(false);
+  const status = securityReview?.status;
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(securityReview.servicenow_comment || "");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard API unavailable — silently ignore, the text is still selectable
+    }
+  }
+
+  return (
+    <Section title="Security Review (Automated)">
+      {(generating || status === "pending") && (
+        <div style={styles.overrideNote}>Generating security report — searching the web for privacy policy, Terms of Service, VPAT, and HECVAT, then running the risk review. This can take up to two minutes.</div>
+      )}
+
+      {!generating && status === "failed" && (
+        <div style={styles.errorMsg}>
+          Report generation failed: {securityReview.error || "unknown error"}
+        </div>
+      )}
+
+      {!generating && (!status || status === "failed") && (
+        <button style={styles.saveButton} onClick={onRegenerate} type="button">
+          {status === "failed" ? "Retry" : "Generate report"}
+        </button>
+      )}
+
+      {!generating && status === "complete" && (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
+            <span
+              style={{
+                ...styles.statusBadge,
+                background: riskTierColor(securityReview.risk_tier),
+              }}
+            >
+              {securityReview.risk_score}/10 · {securityReview.risk_tier}
+            </span>
+            {securityReview.hecvat_provided === false && (
+              <span style={{ ...styles.statusBadge, background: C.stone }}>No HECVAT</span>
+            )}
+          </div>
+
+          <div style={styles.formLabel}>Report</div>
+          <div style={styles.reportBox}>{securityReview.report_markdown}</div>
+
+          <div style={{ ...styles.formLabel, marginTop: "16px" }}>
+            ServiceNow risk summary comment
+          </div>
+          <div style={styles.reportBox}>{securityReview.servicenow_comment}</div>
+          <button style={{ ...styles.cancelButton, marginTop: "8px" }} onClick={handleCopy} type="button">
+            {copied ? "Copied ✓" : "Copy comment"}
+          </button>
+
+          {Array.isArray(securityReview.sources) && securityReview.sources.length > 0 && (
+            <>
+              <div style={{ ...styles.formLabel, marginTop: "16px" }}>Sources checked</div>
+              {securityReview.sources.map((s) => (
+                <SourceRow key={s.doc_type} source={s} />
+              ))}
+            </>
+          )}
+
+          {Array.isArray(securityReview.s3_archived) && securityReview.s3_archived.length > 0 && (
+            <>
+              <div style={{ ...styles.formLabel, marginTop: "16px" }}>
+                Archived to S3 (DataStored/{"{"}request_id{"}"}/...)
+              </div>
+              <div style={styles.reportBox}>
+                {securityReview.s3_archived.map((key) => (
+                  <div key={key}>{key}</div>
+                ))}
+              </div>
+            </>
+          )}
+
+          <button style={{ ...styles.saveButton, marginTop: "16px" }} onClick={onRegenerate} type="button">
+            Regenerate (same documents)
+          </button>
+
+          <div style={{ marginTop: "20px", paddingTop: "16px", borderTop: `1px solid ${C.line}` }}>
+            <AttachDocumentsForm
+              attachedDocuments={attachedDocuments}
+              onSaveAndRegenerate={onSaveAndRegenerate}
+              saving={generating}
+            />
+          </div>
+        </>
+      )}
+
+      {/* Also offer to attach documents before the first report ever runs. */}
+      {!generating && (!status || status === "failed") && (
+        <div style={{ marginTop: "16px", paddingTop: "16px", borderTop: `1px solid ${C.line}` }}>
+          <AttachDocumentsForm
+            attachedDocuments={attachedDocuments}
+            onSaveAndRegenerate={onSaveAndRegenerate}
+            saving={generating}
+          />
+        </div>
+      )}
+    </Section>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
-export default function RequestDetail({ request, onClose, onSaved, onUpdated }) {
-  const requestor = request.requestor || {};
-  const it_review = request.it_review || {};
-  const flags = request.flags || {};
-  const admin = request.admin || {};
-  const review_docs = request.review_docs || {};
+export default function RequestDetail({ request, onClose, onSaved, onRefreshed }) {
+  const [record, setRecord] = useState(request);
+  const [generatingReport, setGeneratingReport] = useState(false);
+  const pollRef = useRef(null);
+
+  // Reset local state when a different request is opened.
+  useEffect(() => {
+    setRecord(request);
+  }, [request.request_id]);
+
+  // Poll while a report is generating in the background (auto-triggered
+  // right after chatbot submission), so the panel updates itself without
+  // the admin needing to close/reopen or hit refresh.
+  useEffect(() => {
+    if (record.security_review?.status !== "pending") return undefined;
+
+    pollRef.current = setInterval(async () => {
+      try {
+        const updated = await getRequest(record.request_id);
+        setRecord(updated);
+        if (updated.security_review?.status !== "pending") {
+          onRefreshed?.(updated);
+        }
+      } catch {
+        // transient fetch error — just try again on the next tick
+      }
+    }, 4000);
+
+    return () => clearInterval(pollRef.current);
+  }, [record.request_id, record.security_review?.status]);
+
+  async function handleRegenerateReport() {
+    setGeneratingReport(true);
+    try {
+      const updated = await regenerateSecurityReport(record.request_id);
+      setRecord(updated);
+      onRefreshed?.(updated);
+    } catch (err) {
+      setRecord((r) => ({
+        ...r,
+        security_review: { status: "failed", error: err.message || "Request failed" },
+      }));
+    } finally {
+      setGeneratingReport(false);
+    }
+  }
+
+  async function handleSaveDocumentsAndRegenerate(attachedDocuments) {
+    setGeneratingReport(true);
+    try {
+      const savedRecord = await patchAdmin(record.request_id, { attached_documents: attachedDocuments });
+      setRecord(savedRecord);
+      const updated = await regenerateSecurityReport(record.request_id);
+      setRecord(updated);
+      onRefreshed?.(updated);
+    } catch (err) {
+      setRecord((r) => ({
+        ...r,
+        security_review: { status: "failed", error: err.message || "Request failed" },
+      }));
+    } finally {
+      setGeneratingReport(false);
+    }
+  }
+
+  const requestor = record.requestor || {};
+  const it_review = record.it_review || {};
+  const flags = record.flags || {};
+  const admin = record.admin || {};
+  const review_docs = record.review_docs || {};
 
   // Local override state — starts from whatever is already saved
   const [overrides, setOverrides] = useState({
@@ -448,7 +564,7 @@ export default function RequestDetail({ request, onClose, onSaved, onUpdated }) 
   const [overrideReason, setOverrideReason] = useState(admin.override_reason || "");
   const [overriddenBy, setOverriddenBy] = useState(admin.overridden_by || "");
   const [adminNotes, setAdminNotes] = useState(admin.admin_notes || "");
-  const [status, setStatus] = useState(request.status || "Submitted");
+  const [status, setStatus] = useState(record.status || "Submitted");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -502,7 +618,7 @@ export default function RequestDetail({ request, onClose, onSaved, onUpdated }) 
     };
 
     try {
-      const updated = await patchAdmin(request.request_id, payload);
+      const updated = await patchAdmin(record.request_id, payload);
       onSaved(updated);
     } catch (err) {
       setError(err.message || "Save failed. Please try again.");
@@ -526,7 +642,7 @@ export default function RequestDetail({ request, onClose, onSaved, onUpdated }) 
               {requestor.requested_for_name} · {requestor.department}
             </div>
             <div style={styles.panelProcurementId}>
-              Procurement ID: <span style={styles.panelProcurementIdValue}>{request.request_id}</span>
+              Procurement ID: <span style={styles.panelProcurementIdValue}>{record.request_id}</span>
             </div>
           </div>
           <button style={styles.closeButton} onClick={onClose} aria-label="Close panel">
@@ -620,9 +736,6 @@ export default function RequestDetail({ request, onClose, onSaved, onUpdated }) 
             <ReviewTypeRow label="Integration Docs" reviewSection={review_docs.integration} />
           </Section>
 
-          {/* ── ATI draft review (Step 1 documents → Step 2 draft) ── */}
-          <AtiReviewPanel request={request} onUpdated={onUpdated || onSaved} />
-
           {/* ── Computed Flags ── */}
           <Section title="Computed Flags">
             <div style={{ marginBottom: "10px" }}>
@@ -664,6 +777,17 @@ export default function RequestDetail({ request, onClose, onSaved, onUpdated }) 
               onToggleCompleted={handleToggleCompleted}
             />
           </Section>
+
+          {/* ── Security Review (Automated) — only when flagged ── */}
+          {flags.security_flag === true && (
+            <SecurityReviewPanel
+              securityReview={record.security_review}
+              attachedDocuments={admin.attached_documents}
+              generating={generatingReport}
+              onRegenerate={handleRegenerateReport}
+              onSaveAndRegenerate={handleSaveDocumentsAndRegenerate}
+            />
+          )}
 
           {/* ── Override form ── */}
           <Section title="Override & Admin Notes">
@@ -835,173 +959,6 @@ const styles = {
     fontSize: "12px",
     color: C.stone,
   },
-  renewalNote: {
-    fontFamily: C.mono,
-    fontSize: "11.5px",
-    lineHeight: 1.5,
-    color: C.stone,
-    backgroundColor: C.paperAlt,
-    borderLeft: `3px solid ${C.stoneLight}`,
-    paddingTop: "8px",
-    paddingRight: "10px",
-    paddingBottom: "8px",
-    paddingLeft: "10px",
-    marginBottom: "12px",
-  },
-  atiSteps: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "10px",
-    marginBottom: "12px",
-  },
-  atiButton: {
-    fontFamily: C.mono,
-    fontSize: "12px",
-    fontWeight: 700,
-    color: C.ink,
-    backgroundColor: C.white,
-    border: `1px solid ${C.line}`,
-    paddingTop: "10px",
-    paddingRight: "14px",
-    paddingBottom: "10px",
-    paddingLeft: "14px",
-    cursor: "pointer",
-  },
-  atiButtonPrimary: {
-    color: C.white,
-    backgroundColor: C.ink,
-    borderColor: C.ink,
-  },
-  atiButtonDisabled: {
-    opacity: 0.45,
-    cursor: "not-allowed",
-  },
-  atiError: {
-    fontFamily: C.mono,
-    fontSize: "11.5px",
-    color: C.red,
-    marginBottom: "10px",
-  },
-  atiDocs: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "6px",
-    marginBottom: "14px",
-  },
-  atiDocRow: {
-    display: "flex",
-    alignItems: "baseline",
-    gap: "10px",
-  },
-  atiDocLabel: {
-    fontFamily: C.mono,
-    fontSize: "11px",
-    textTransform: "uppercase",
-    color: C.stone,
-    width: "130px",
-    flexShrink: 0,
-  },
-  atiDocValue: {
-    display: "flex",
-    flexDirection: "column",
-    gap: "2px",
-    minWidth: 0,
-  },
-  atiDocLink: {
-    fontSize: "12.5px",
-    color: C.red,
-    wordBreak: "break-all",
-  },
-  atiDocMeta: {
-    fontFamily: C.mono,
-    fontSize: "10.5px",
-    color: C.stoneLight,
-  },
-  atiDocMissing: {
-    fontSize: "12.5px",
-    color: C.stoneLight,
-    fontStyle: "italic",
-  },
-  atiReport: {
-    borderTop: `1px solid ${C.line}`,
-    paddingTop: "14px",
-  },
-  atiRiskRow: {
-    display: "flex",
-    alignItems: "baseline",
-    gap: "10px",
-    marginBottom: "10px",
-  },
-  atiRisk: {
-    fontFamily: C.mono,
-    fontSize: "14px",
-    fontWeight: 700,
-  },
-  atiGenerated: {
-    fontFamily: C.mono,
-    fontSize: "10.5px",
-    color: C.stoneLight,
-    marginLeft: "auto",
-  },
-  atiDraftBanner: {
-    fontFamily: C.mono,
-    fontSize: "11px",
-    lineHeight: 1.5,
-    color: C.ink,
-    backgroundColor: C.paperAlt,
-    borderLeft: `3px solid ${C.red}`,
-    paddingTop: "8px",
-    paddingRight: "10px",
-    paddingBottom: "8px",
-    paddingLeft: "10px",
-    marginBottom: "14px",
-  },
-  atiSubTitle: {
-    fontFamily: C.mono,
-    fontSize: "11px",
-    fontWeight: 700,
-    textTransform: "uppercase",
-    letterSpacing: "0.05em",
-    color: C.stone,
-    marginBottom: "6px",
-    marginTop: "12px",
-  },
-  atiList: {
-    marginTop: 0,
-    marginBottom: 0,
-    paddingLeft: "18px",
-  },
-  atiListItem: {
-    fontSize: "12.5px",
-    lineHeight: 1.5,
-    color: C.ink,
-    marginBottom: "5px",
-  },
-  atiBody: {
-    fontFamily: C.sans,
-    fontSize: "12.5px",
-    lineHeight: 1.55,
-    color: C.ink,
-    backgroundColor: C.paperAlt,
-    border: `1px solid ${C.line}`,
-    paddingTop: "12px",
-    paddingRight: "14px",
-    paddingBottom: "12px",
-    paddingLeft: "14px",
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
-    maxHeight: "420px",
-    overflowY: "auto",
-    marginTop: 0,
-    marginBottom: 0,
-  },
-  atiPrecedent: {
-    fontFamily: C.mono,
-    fontSize: "11px",
-    lineHeight: 1.5,
-    color: C.stone,
-    marginTop: "12px",
-  },
   flagRow: {
     display: "flex",
     justifyContent: "space-between",
@@ -1144,6 +1101,19 @@ const styles = {
     color: C.ink,
     boxSizing: "border-box",
     outline: "none",
+  },
+  reportBox: {
+    whiteSpace: "pre-wrap",
+    background: C.paper,
+    border: `1px solid ${C.line}`,
+    borderRadius: "6px",
+    padding: "12px 14px",
+    fontSize: "12.5px",
+    fontFamily: C.mono,
+    lineHeight: 1.6,
+    color: C.ink,
+    maxHeight: "340px",
+    overflowY: "auto",
   },
   errorMsg: {
     marginTop: "10px",

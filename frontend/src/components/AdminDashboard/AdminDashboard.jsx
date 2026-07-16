@@ -302,17 +302,17 @@ export default function AdminDashboard() {
 
   const sorted = [...filtered].sort(SORT_COMPARATORS[sortBy] || SORT_COMPARATORS.newest);
 
-  // Refresh a request in the list but keep the detail panel open. Used by
-  // in-panel work (retrieving ATI documents, generating the draft review),
-  // where closing the panel would throw the reviewer out mid-task.
-  function handleUpdated(updatedRequest) {
+  // Refresh a request in the list but keep the detail panel open -- used when
+  // the security report finishes generating in the background, where closing
+  // the panel would throw the reviewer out mid-task.
+  function handleRefreshed(updatedRequest) {
     setRequests((prev) =>
       prev.map((r) => (r.request_id === updatedRequest.request_id ? updatedRequest : r))
     );
   }
 
   function handleSaved(updatedRequest) {
-    handleUpdated(updatedRequest);
+    handleRefreshed(updatedRequest);
     setSelectedId(null);
   }
 
@@ -562,7 +562,7 @@ export default function AdminDashboard() {
           request={selected}
           onClose={() => setSelectedId(null)}
           onSaved={handleSaved}
-          onUpdated={handleUpdated}
+          onRefreshed={handleRefreshed}
         />
       )}
     </div>

@@ -293,16 +293,97 @@ const RENEWAL_INTRO =
   "product itself. It only takes a few minutes, and it keeps your review " +
   "accurate.";
 
+// -----------------------------------------------------------------
+// PART C — flag computation logic (mirrors the Python spec exactly)
+// Computed silently. Never rendered to the requester — staff/admin only.
+// -----------------------------------------------------------------
+export function evaluate(a) {
+  const scopeQualifies =
+    a.scope_of_usage === "Classroom" ||
+    a.scope_of_usage === "College" ||
+    a.scope_of_usage === "University";
+  const highUsers = a.estimated_users === "30-100" || a.estimated_users === "100+";
+  const ati_flag = highUsers && scopeQualifies;
+  const ati_flag_reason = `${a.estimated_users} users, ${a.scope_of_usage} scope`;
+
+  const blockA = {
+    HIPAA: a.la_health === "yes",
+    PII: a.la_pii === "yes",
+    "PCI DSS / GLBA": a.la_payment === "yes",
+    "Law Enforcement Records": a.la_lawenforcement === "yes",
+  };
+  const blockATriggered = Object.keys(blockA).filter((k) => blockA[k]);
+
+  const blockB = {
+    FERPA: a.lb_coursework === "yes",
+    "Employee Information": a.lb_employee === "yes",
+    Financials: a.lb_budget === "yes",
+    "Research/IP": a.lb_research === "yes",
+    "Attorney-client": a.lb_legal === "yes",
+  };
+  const blockBTriggered = Object.keys(blockB).filter((k) => blockB[k]);
+
+  let risk_level, security_flag, security_flag_reason;
+  if (blockATriggered.length > 0) {
+    risk_level = "High";
+    security_flag = true;
+    security_flag_reason = "Level 1 data: " + blockATriggered.join(", ");
+  } else if (blockBTriggered.length > 0) {
+    risk_level = "Medium";
+    security_flag = true;
+    security_flag_reason = "Level 2 data: " + blockBTriggered.join(", ");
+  } else {
+    risk_level = "Low";
+    security_flag = false;
+    security_flag_reason = "No Level 1 or Level 2 data identified";
+  }
+
+  const integration_flag = a.shares_data_with_campus_system === "yes";
+  const integration_flag_reason =
+    a.integration_explanation || (integration_flag ? "Shares data with another campus system" : null);
+
+  // AI / Automated Decision System tracking (California AB 302). ai_flag marks
+  // any AI-enabled software; the reason calls out the high-risk ADS subset
+  // (used to make decisions about people) that goes on the state inventory.
+  const ai_flag = a.ai_capabilities === "yes";
+  let ai_flag_reason;
+  if (a.ai_automated_decisions === "yes") {
+    ai_flag_reason = "AI-enabled automated decision system — California ADS inventory (AB 302)";
+  } else if (ai_flag) {
+    ai_flag_reason = "AI-enabled software";
+  } else {
+    ai_flag_reason = "No AI capabilities reported";
+  }
+
+  return {
+    ati_flag,
+    ati_flag_reason,
+    security_flag,
+    security_flag_reason,
+    risk_level,
+    integration_flag,
+    integration_flag_reason,
+    ai_flag,
+    ai_flag_reason,
+  };
+}
+
+// (it_review is built by answersToItReview() from itReview.js — the team's
+// shared mapper — so the shape stays consistent across the app.)
+
 // Renders inline markdown within a single line: **bold**/__bold__,
 // *italic*/_italic_, and `inline code`. Returns an array of strings/nodes.
+// [label](url) links are stripped down to their label first -- the backend
+// occasionally leaks raw markdown links that should never reach the screen.
 function renderInline(text) {
+  const stripped = String(text || "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
   const regex = /(\*\*|__)(.+?)\1|(`)(.+?)\3|(\*|_)(.+?)\5/g;
   const nodes = [];
   let lastIndex = 0;
   let match;
   let key = 0;
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > lastIndex) nodes.push(text.slice(lastIndex, match.index));
+  while ((match = regex.exec(stripped)) !== null) {
+    if (match.index > lastIndex) nodes.push(stripped.slice(lastIndex, match.index));
     if (match[1]) {
       nodes.push(<strong key={key++}>{match[2]}</strong>);
     } else if (match[3]) {
@@ -316,7 +397,7 @@ function renderInline(text) {
     }
     lastIndex = regex.lastIndex;
   }
-  if (lastIndex < text.length) nodes.push(text.slice(lastIndex));
+  if (lastIndex < stripped.length) nodes.push(stripped.slice(lastIndex));
   return nodes;
 }
 
