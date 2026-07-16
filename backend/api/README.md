@@ -88,7 +88,7 @@ curl -X PATCH http://localhost:8000/requests/<request_id>/admin \
     "overrides": {"security_flag": true},
     "override_reason": "Vendor has had a recent breach",
     "overridden_by": "jsmith@sdsu.edu",
-    "status": "UnderStaffReview"
+    "status": "AdditionalReview"
   }'
 ```
 
@@ -97,10 +97,15 @@ curl -X PATCH http://localhost:8000/requests/<request_id>/admin \
 - Storage: **real DynamoDB** (`handlers/store.py`, table `SoftwareRequests`
   in `us-west-2`, on-demand billing). Numbers are converted to/from
   `Decimal` automatically -- handlers just deal with plain dicts.
+- Frontend wiring: Intake form `POST /requests`, chatbot
+  `PATCH /requests/{id}/chatbot`, admin dashboard `GET /requests` +
+  `PATCH /requests/{id}/admin`. Point the UI at this API with
+  `VITE_API_BASE_URL` (no trailing slash).
 - Flags: computed by a **temporary stub** (`store._stub_compute_flags`)
   implementing the logic from `Chatbot_Questions_and_Flags.md` Part C.
-  Swap for `from rules_engine.rules_engine import compute_flags` once
-  Person 4 delivers `backend/rules_engine/` -- same input/output shape.
+  ATI scope is read from `requestor.scope_of_usage` (not duplicated on
+  `it_review`). Swap for `from rules_engine.rules_engine import compute_flags`
+  once Person 4 delivers `backend/rules_engine/` -- same input/output shape.
 - Deployment: `template.yaml` is a ready-to-go AWS SAM template for all 5
   endpoints as real Lambdas behind API Gateway. Not deployed yet -- ask
   before running `sam deploy`, since it creates real billed AWS resources.

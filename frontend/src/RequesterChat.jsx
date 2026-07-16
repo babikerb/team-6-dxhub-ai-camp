@@ -1,5 +1,7 @@
-import React, { useState, useRef, useEffect, useMemo } from "react";
-import { converseTurn, assistText, submitChatbot, PARSEABLE, ASSISTED_TEXT } from "./chatbotParse.js";
+import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
+import { converseTurn, assistText, PARSEABLE, ASSISTED_TEXT } from "./chatbotParse.js";
+import { getRequest, submitChatbotReview } from "./api.js";
+import { answersToItReview } from "./itReview.js";
 
 // -----------------------------------------------------------------
 // MASTER QUESTION LIST (Part B)
@@ -15,6 +17,7 @@ const STEPS = [
     bot: "What's the name of the software you're requesting?",
     type: "text",
     placeholder: "e.g. Zoom, Adobe Creative Cloud",
+    skip: (a) => Boolean(a.software_name), // already collected by the intake form
   },
   {
     id: "scope_of_usage",
@@ -27,6 +30,7 @@ const STEPS = [
       { label: "One department or office", value: "Department" },
       { label: "An entire college or the whole university", value: "University" },
     ],
+    skip: (a) => Boolean(a.scope_of_usage), // already collected by the intake form
   },
   {
     id: "estimated_users",
@@ -268,6 +272,16 @@ function visibleSteps(answers) {
   return STEPS.filter((s) => !(s.skip && s.skip(answers)));
 }
 
+// First step not already answered/skipped — used to start past the questions
+// the intake form pre-seeded (software_name, scope_of_usage).
+function findFirstStepIndex(answers) {
+  let i = 0;
+  while (i < STEPS.length && STEPS[i].skip && STEPS[i].skip(answers)) {
+    i++;
+  }
+  return i;
+}
+
 // -----------------------------------------------------------------
 // PART C — flag computation logic (mirrors the Python spec exactly)
 // Computed silently. Never rendered to the requester — staff/admin only.
@@ -343,44 +357,8 @@ export function evaluate(a) {
   };
 }
 
-// Maps the chatbot's raw answers to the `it_review` object the backend expects.
-// The backend (Person 4's compute_flags) computes the flags authoritatively from
-// this — the frontend evaluate() above is only for local display/logging.
-export function buildItReview(a) {
-  const level_1_categories = [
-    a.la_health === "yes" && "HIPAA",
-    a.la_pii === "yes" && "PII",
-    a.la_payment === "yes" && "PCI DSS / GLBA",
-    a.la_lawenforcement === "yes" && "Law Enforcement Records",
-  ].filter(Boolean);
-  const level_2_categories = [
-    a.lb_coursework === "yes" && "FERPA",
-    a.lb_employee === "yes" && "Employee Information",
-    a.lb_budget === "yes" && "Financials",
-    a.lb_research === "yes" && "Research/IP",
-    a.lb_legal === "yes" && "Attorney-client",
-  ].filter(Boolean);
-  return {
-    scope_of_usage: a.scope_of_usage,
-    estimated_users: a.estimated_users,
-    interaction_method: a.interaction_method,
-    software_category: a.software_category,
-    // boolean so the backend's bool() check doesn't treat "no" as truthy
-    shares_data_with_campus_system: a.shares_data_with_campus_system === "yes",
-    integration_explanation: a.integration_explanation || "",
-    sso_capable: a.sso_capable,
-    level_1_categories,
-    level_2_categories,
-    other_data_category: a.other_data_category || "",
-    compliance_requirements: a.compliance_requirements || "",
-    ai_capabilities: a.ai_capabilities,
-    ai_use_description: a.ai_use_description || "",
-    ai_automated_decisions: a.ai_automated_decisions || "",
-    vendor_privacy_policy_url: a.vendor_privacy_policy_url || "",
-    vendor_tos_url: a.vendor_tos_url || "",
-    vendor_accessibility_url: a.vendor_accessibility_url || "",
-  };
-}
+// (it_review is built by answersToItReview() from itReview.js — the team's
+// shared mapper — so the shape stays consistent across the app.)
 
 // Guaranteed catch-all: strip any markdown the backend missed, so literal
 // **, __, `, ~~, or [text](url) never reach the screen.
@@ -432,7 +410,7 @@ function BotText({ text }) {
 
 function RequesterChat({ requestId }) {
   const [answers, setAnswers] = useState({});
-  const [log, setLog] = useState([{ from: "bot", label: STEPS[0].label, text: STEPS[0].bot }]);
+  const [log, setLog] = useState([]); // seeded by the load effect below
   const [stepIndex, setStepIndex] = useState(0); // index into full STEPS array
   const [textInput, setTextInput] = useState("");
   const [multiSelected, setMultiSelected] = useState([]);
@@ -443,6 +421,10 @@ function RequesterChat({ requestId }) {
   const [revealButtons, setRevealButtons] = useState(false); // model laid out options
   const [convo, setConvo] = useState([]);              // per-question turn history
   const [isMobile, setIsMobile] = useState(false);     // phone vs computer layout
+  // Backend load/persist state (integrates with the intake form + dashboard):
+  const [loading, setLoading] = useState(Boolean(requestId));
+  const [loadError, setLoadError] = useState(null);
+  const [submitError, setSubmitError] = useState(null);
   const scrollRef = useRef(null);
 
   useEffect(() => {
@@ -450,6 +432,65 @@ function RequesterChat({ requestId }) {
       scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
     }
   }, [log]);
+
+  // Persist the finished answers: the backend computes flags from it_review and
+  // stores them on the request (which the admin dashboard then reads).
+  const persistReview = useCallback(
+    async (finalAnswers) => {
+      setLog((l) => [
+        ...l,
+        { from: "bot", label: "Submitted", text: "Thanks — that's everything I need. Your request has been submitted for IT Review." },
+      ]);
+      setDone(true);
+      setSubmitError(null);
+      if (!requestId) return;
+      try {
+        await submitChatbotReview(requestId, answersToItReview(finalAnswers));
+      } catch (err) {
+        setSubmitError(err.message || "Could not save your answers.");
+      }
+    },
+    [requestId]
+  );
+
+  // On load, pull the intake record and pre-seed software_name / scope_of_usage
+  // so the chatbot doesn't re-ask what the 18-question form already collected.
+  useEffect(() => {
+    if (!requestId) {
+      setLog([{ from: "bot", label: STEPS[0].label, text: STEPS[0].bot }]);
+      setStepIndex(0);
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setLoadError(null);
+    (async () => {
+      try {
+        const record = await getRequest(requestId);
+        if (cancelled) return;
+        const requestor = record.requestor || {};
+        const seeded = {};
+        if (requestor.software_name) seeded.software_name = requestor.software_name;
+        if (requestor.scope_of_usage) seeded.scope_of_usage = requestor.scope_of_usage;
+        const startIndex = findFirstStepIndex(seeded);
+        setAnswers(seeded);
+        setStepIndex(startIndex);
+        if (startIndex < STEPS.length) {
+          setLog([{ from: "bot", label: STEPS[startIndex].label, text: STEPS[startIndex].bot }]);
+        } else {
+          await persistReview(seeded);
+        }
+      } catch (err) {
+        if (!cancelled) setLoadError(err.message || "Could not load this request.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [requestId, persistReview]);
 
   // Track phone-sized viewports so the chat frame can go full-screen on mobile
   // and stay a centered card on desktop.
@@ -490,22 +531,8 @@ function RequesterChat({ requestId }) {
       setStepIndex(index);
       setMultiSelected([]);
     } else {
-      setLog((l) => [
-        ...l,
-        {
-          from: "bot",
-          label: "Submitted",
-          text: "Thanks — that's everything I need. Your request has been submitted for IT Review.",
-        },
-      ]);
-      // Save to the backend: it computes the flags and writes it_review + flags
-      // to this request, which is what the admin dashboard reads. (evaluate() is
-      // kept only for a local console preview.)
-      console.log("Local flag preview:", evaluate(updatedAnswers));
-      submitChatbot(requestId, buildItReview(updatedAnswers))
-        .then((rec) => console.log("Saved to request; flags set:", rec.flags))
-        .catch((e) => console.warn("Chatbot save failed (is this a real request id?):", e.message));
-      setDone(true);
+      // All questions answered: persist to the backend (computes + stores flags).
+      persistReview(updatedAnswers);
     }
   }
 
@@ -650,6 +677,41 @@ function RequesterChat({ requestId }) {
   }
 
   const totalVisible = visible.length;
+
+  if (loading) {
+    return (
+      <div style={pageStyle}>
+        <div style={cardStyle}>
+          <div style={mastheadStyle}>
+            <div style={styles.badge}>SDSU</div>
+            <div>
+              <div style={styles.headline}>Software Request Assistant</div>
+              <div style={styles.ticketRow}>
+                {requestId ? `Request #${requestId.slice(0, 8)}` : "IT Review intake"}
+              </div>
+            </div>
+          </div>
+          <div style={styles.footer}>Loading your request…</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div style={pageStyle}>
+        <div style={cardStyle}>
+          <div style={mastheadStyle}>
+            <div style={styles.badge}>SDSU</div>
+            <div>
+              <div style={styles.headline}>Software Request Assistant</div>
+            </div>
+          </div>
+          <div style={styles.footer}>Couldn't load this request: {loadError}</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={pageStyle}>

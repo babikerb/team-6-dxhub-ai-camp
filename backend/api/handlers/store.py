@@ -18,13 +18,21 @@ from decimal import Decimal
 import boto3
 
 _TABLE_NAME = os.environ.get("TABLE_NAME", "SoftwareRequests")
-_table = boto3.resource("dynamodb").Table(_TABLE_NAME)
+_AWS_REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-west-2"
+_table = None
+
+
+def _get_table():
+    global _table
+    if _table is None:
+        _table = boto3.resource("dynamodb", region_name=_AWS_REGION).Table(_TABLE_NAME)
+    return _table
+
 
 VALID_STATUSES = {
     "Submitted",
-    "ChatbotInProgress",
-    "FlagsComputed",
-    "UnderStaffReview",
+    "ITReview",
+    "AdditionalReview",
     "Approved",
     "Denied",
 }
@@ -88,19 +96,19 @@ def _from_decimal(obj):
 
 
 def get_request(request_id: str) -> dict | None:
-    item = _table.get_item(Key={"request_id": request_id}).get("Item")
+    item = _get_table().get_item(Key={"request_id": request_id}).get("Item")
     return _from_decimal(item) if item else None
 
 
 def save_request(record: dict) -> None:
-    _table.put_item(Item=_to_decimal(record))
+    _get_table().put_item(Item=_to_decimal(record))
 
 
 def _scan_all() -> list[dict]:
     items = []
     kwargs = {}
     while True:
-        resp = _table.scan(**kwargs)
+        resp = _get_table().scan(**kwargs)
         items.extend(resp.get("Items", []))
         if "LastEvaluatedKey" not in resp:
             break
@@ -134,9 +142,15 @@ def list_requests(filters: dict) -> list[dict]:
     return items
 
 
-def _stub_compute_flags(it_review: dict) -> dict:
+def _stub_compute_flags(it_review: dict, scope_of_usage: str | None = None) -> dict:
+    """Compute ATI / Security / Integration flags.
+
+    scope_of_usage comes from requestor (frozen schema keeps it out of
+    it_review). Callers should pass record["requestor"]["scope_of_usage"].
+    """
     estimated_users = it_review.get("estimated_users")
-    scope = it_review.get("scope_of_usage")
+    # Prefer requestor scope; fall back to it_review only for older callers.
+    scope = scope_of_usage or it_review.get("scope_of_usage")
 
     ati_flag = estimated_users in {"30-100", "100+"} and scope in {
         "University", "College", "Classroom",
@@ -161,7 +175,13 @@ def _stub_compute_flags(it_review: dict) -> dict:
         security_flag = False
         security_reason = "No Level 1 or Level 2 data reported"
 
-    integration_flag = bool(it_review.get("shares_data_with_campus_system"))
+    # Must be a real boolean — bool("no") is True in Python.
+    shares = it_review.get("shares_data_with_campus_system")
+    if isinstance(shares, str):
+        integration_flag = shares.strip().lower() in {"yes", "true", "1"}
+    else:
+        integration_flag = bool(shares)
+
     integration_reason = (
         it_review.get("integration_explanation") or "Shares data with campus systems"
         if integration_flag
@@ -172,8 +192,10 @@ def _stub_compute_flags(it_review: dict) -> dict:
     # any AI-enabled software; the high-risk ADS subset (used for decisions about
     # people) is what goes on the state inventory, called out in the reason.
     # NOTE for Person 4: mirror this in the real rules_engine.compute_flags().
-    ai_flag = it_review.get("ai_capabilities") == "yes"
-    if it_review.get("ai_automated_decisions") == "yes":
+    # it_review carries these as real booleans (see frontend/src/itReview.js),
+    # not the raw "yes"/"no" chat answers.
+    ai_flag = bool(it_review.get("ai_capabilities"))
+    if it_review.get("ai_automated_decisions"):
         ai_reason = "AI-enabled automated decision system — California ADS inventory (AB 302)"
     elif ai_flag:
         ai_reason = "AI-enabled software"

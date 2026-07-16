@@ -25,11 +25,16 @@ def handler(event, context=None):
     if not isinstance(it_review, dict):
         return store.error_response(400, "Body must include an 'it_review' object")
 
-    flags = store._stub_compute_flags(it_review)
+    # ATI uses requestor.scope_of_usage — keep it out of persisted it_review.
+    scope = (record.get("requestor") or {}).get("scope_of_usage")
+    flags = store._stub_compute_flags(it_review, scope_of_usage=scope)
+
+    # Do not persist a duplicate scope on it_review if a client sent one.
+    it_review.pop("scope_of_usage", None)
 
     record["it_review"] = it_review
     record["flags"] = flags
-    record["status"] = "FlagsComputed"
+    record["status"] = "ITReview"
     record["updated_at"] = store.now_iso()
 
     store.save_request(record)
