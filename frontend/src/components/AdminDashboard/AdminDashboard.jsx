@@ -24,9 +24,9 @@ const C = {
 // The three review dashboards reachable from each row. Order matches the
 // flag columns so the eye tracks across the row consistently.
 const REVIEW_DASHBOARDS = [
-  { type: "ati", label: "ATI Dashboard" },
-  { type: "itso", label: "Security Dashboard" },
-  { type: "integration", label: "Data Integration Dashboard" },
+  { type: "ati", label: "ATI" },
+  { type: "itso", label: "Security" },
+  { type: "integration", label: "Data Integration" },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

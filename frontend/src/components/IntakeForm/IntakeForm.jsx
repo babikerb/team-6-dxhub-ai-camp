@@ -449,12 +449,13 @@ function IntakeForm({ onSubmitted }) {
     return false;
   }
 
-  // "Yes, that's the right software" — record it and pick up where handleNext left off.
-  async function confirmIdentity() {
+  // "The name is correct" — record it and continue past the software-name step.
+  // (Catalog checks already ran before the spelling check, so there's nothing
+  // left to re-run here.)
+  function confirmIdentity() {
     setIdentityConfirmed(true);
     setView("question");
-    const showed = await runCatalogChecks();
-    if (!showed) advanceFrom(stepIndex);
+    advanceFrom(stepIndex);
   }
 
   // "No / let me fix the name" — back to the name field, and allow a re-check.
@@ -480,27 +481,31 @@ function IntakeForm({ onSubmitted }) {
     if (group.fields.includes("software_name")) {
       setPendingStepIndex(stepIndex + 1 >= STEPS.length ? STEPS.length : stepIndex + 1);
 
-      // 0) Confirm we understood WHICH product this is ("Canva — online design
-      //    platform. Is that right?") before the rest of the form assumes it.
-      //    Skipped once confirmed so Back/Next doesn't re-ask.
+      // 1) & 2) Catalog + alternatives checks (spreadsheet match, then web-search matcher).
+      const showed = await runCatalogChecks();
+      if (showed) return;
+
+      // 3) Spelling check — only interrupts if we couldn't find a real product by
+      //    this name at all, so a typo gets caught before the rest of the form
+      //    assumes it. Skipped once confirmed so Back/Next doesn't re-ask.
       if (!identityConfirmed) {
         setChecking(true);
         try {
           const id = await identifySoftware(
             form.software_name, form.use_description, form.vendor_website,
           );
-          setIdentity(id);
-          setView("confirmSoftware");
-          return;
+          if (!id.identified) {
+            setIdentity(id);
+            setView("confirmSoftware");
+            return;
+          }
+          setIdentityConfirmed(true);
         } catch {
           // Identify unavailable — never block the requester; carry on.
         } finally {
           setChecking(false);
         }
       }
-
-      const showed = await runCatalogChecks();
-      if (showed) return;
     }
 
     advanceFrom(stepIndex);
