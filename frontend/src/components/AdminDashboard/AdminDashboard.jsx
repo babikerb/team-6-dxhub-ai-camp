@@ -40,24 +40,63 @@ function FlagPill({ value, label, overridden, completed }) {
     : "Review remaining";
   return (
     <span
+      data-testid="flag-pill"
       title={overridden ? `${state} (staff override in effect)` : state}
+      aria-label={overridden ? `${label}: ${state} (staff override in effect)` : `${label}: ${state}`}
       style={{
-        display: "inline-block",
-        padding: "2px 8px",
-        borderRadius: "3px",
+        position: "relative",
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "3px",
+        minWidth: "48px",
+        boxSizing: "border-box",
+        padding: active ? "3px 8px" : "2px 7px",
+        borderRadius: "999px",
         fontFamily: C.mono,
         fontSize: "10.5px",
         fontWeight: 700,
-        letterSpacing: "0.04em",
+        letterSpacing: "0.03em",
+        lineHeight: 1.3,
         background: done ? GREEN : active ? C.red : "transparent",
-        color: active ? C.white : C.stoneLight,
-        border: active ? "none" : `1px solid ${C.line}`,
-        boxShadow: overridden ? `0 0 0 1.5px ${C.ink}` : "none",
-        marginRight: "4px",
+        // C.stone (not C.stoneLight) so muted labels still clear WCAG AA
+        // (~5.3:1 on white) — stoneLight measured ~2.1:1 and failed review.
+        color: active ? C.white : C.stone,
+        border: active ? "none" : `1px dashed ${C.stone}`,
       }}
     >
-      {label}
-      {overridden && "*"}
+      {done && (
+        <span aria-hidden="true" style={{ fontSize: "9px", lineHeight: 1 }}>
+          ✓
+        </span>
+      )}
+      <span>{label}</span>
+      {overridden && (
+        // Corner badge instead of a box-shadow ring — a ring around an
+        // already-colored pill read as a focus outline in review, not an
+        // intentional "staff edited this" affordance.
+        <span
+          aria-hidden="true"
+          style={{
+            position: "absolute",
+            top: "-6px",
+            right: "-6px",
+            width: "13px",
+            height: "13px",
+            borderRadius: "50%",
+            background: C.ink,
+            color: C.white,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: "8px",
+            lineHeight: 1,
+            border: `1.5px solid ${C.white}`,
+          }}
+        >
+          ✎
+        </span>
+      )}
     </span>
   );
 }
@@ -75,7 +114,7 @@ function Legend() {
   return (
     <div style={styles.legend} aria-label="Color legend">
       <span style={styles.legendGroupLabel}>Flags:</span>
-      <LegendItem swatch={{ background: "transparent", border: `1px solid ${C.line}` }}>
+      <LegendItem swatch={{ background: "transparent", border: `1px dashed ${C.stone}` }}>
         Not flagged
       </LegendItem>
       <LegendItem swatch={{ background: C.red }}>Review remaining</LegendItem>
@@ -436,10 +475,12 @@ export default function AdminDashboard() {
                         <Badge label={statusLabel(r.status)} color="var(--stone)" />
                       </td>
                       <td style={styles.td}>
-                        <FlagPill value={effective.ati.value} overridden={effective.ati.overridden} completed={effective.ati.completed} label="ATI" />
-                        <FlagPill value={effective.security.value} overridden={effective.security.overridden} completed={effective.security.completed} label="ITSO" />
-                        <FlagPill value={effective.integration.value} overridden={effective.integration.overridden} completed={effective.integration.completed} label="INT" />
-                        <FlagPill value={effective.ai.value} overridden={effective.ai.overridden} completed={effective.ai.completed} label="AI" />
+                        <div style={styles.flagsRow}>
+                          <FlagPill value={effective.ati.value} overridden={effective.ati.overridden} completed={effective.ati.completed} label="ATI" />
+                          <FlagPill value={effective.security.value} overridden={effective.security.overridden} completed={effective.security.completed} label="ITSO" />
+                          <FlagPill value={effective.integration.value} overridden={effective.integration.overridden} completed={effective.integration.completed} label="INT" />
+                          <FlagPill value={effective.ai.value} overridden={effective.ai.overridden} completed={effective.ai.completed} label="AI" />
+                        </div>
                       </td>
                       <td style={styles.td}>
                         {flags.risk_level ? (
@@ -627,7 +668,7 @@ const styles = {
     display: "inline-block",
     width: "10px",
     height: "10px",
-    borderRadius: "2px",
+    borderRadius: "5px",
     boxSizing: "border-box",
   },
   tableWrapper: {
@@ -669,6 +710,12 @@ const styles = {
     fontSize: "11px",
     color: C.stone,
     marginTop: "2px",
+  },
+  flagsRow: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, max-content)",
+    gap: "6px 8px",
+    alignItems: "center",
   },
   emptyCell: {
     padding: "40px",
