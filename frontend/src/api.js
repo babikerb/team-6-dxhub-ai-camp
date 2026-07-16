@@ -32,6 +32,29 @@ export async function getRequest(requestId) {
 }
 
 /**
+ * POST /requests/{id}/ati-documents — Step 1 of the ATI review: find the
+ * vendor's VPAT / privacy policy / terms. Synchronous; returns the updated
+ * record with ati_review.documents populated.
+ */
+export async function retrieveAtiDocuments(requestId) {
+  return request(`/requests/${encodeURIComponent(requestId)}/ati-documents`, {
+    method: "POST",
+  });
+}
+
+/**
+ * POST /requests/{id}/ati-report — Step 2: generate the draft ATI review.
+ * Returns 202 with ati_review.status = "pending"; the report lands
+ * asynchronously (it reads the VPAT and calls Bedrock, well past any
+ * request timeout). Poll getRequest until status is complete/failed.
+ */
+export async function generateAtiReport(requestId) {
+  return request(`/requests/${encodeURIComponent(requestId)}/ati-report`, {
+    method: "POST",
+  });
+}
+
+/**
  * GET /requests — list with optional filters.
  * Returns { items, count }.
  */
@@ -61,6 +84,22 @@ export async function patchAdmin(requestId, payload) {
   return request(`/requests/${encodeURIComponent(requestId)}/admin`, {
     method: "PATCH",
     body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * POST /chatbot/identify-software — confirm what a named product actually is
+ * ("Canva — online design platform"), grounded in a web search.
+ * Returns {identified, canonical_name, one_liner, source_url, confidence}.
+ */
+export async function identifySoftware(softwareName, useDescription, vendorWebsite) {
+  return request("/chatbot/identify-software", {
+    method: "POST",
+    body: JSON.stringify({
+      software_name: softwareName,
+      use_description: useDescription || undefined,
+      vendor_website: vendorWebsite || undefined,
+    }),
   });
 }
 
@@ -112,4 +151,46 @@ export async function matchSoftware(softwareName, useDescription, catalog) {
  */
 export async function getReviewDocs(requestId) {
   return request(`/requests/${encodeURIComponent(requestId)}/review-docs`);
+}
+
+/**
+ * Upload a review document to S3 and register it.
+ *
+ * Three steps, because the file goes straight from the browser to S3 and never
+ * passes through the API (API Gateway caps payloads at 10 MB; VPAT PDFs exceed
+ * it): ask for a presigned URL, PUT the bytes, then confirm so DynamoDB
+ * reflects the new file.
+ *
+ * The Content-Type header MUST match what the URL was signed with, or S3
+ * rejects the PUT with SignatureDoesNotMatch.
+ *
+ * kind: "document" (vendor evidence) | "final_report" (the reviewer's own review)
+ * Returns the updated request record.
+ */
+export async function uploadReviewDoc(requestId, reviewType, file, kind = "document") {
+  const contentType = file.type || "application/octet-stream";
+  const { upload_url, filename } = await request(
+    `/requests/${encodeURIComponent(requestId)}/review-docs/upload-url`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        review_type: reviewType,
+        filename: file.name,
+        content_type: contentType,
+        kind,
+      }),
+    }
+  );
+
+  const put = await fetch(upload_url, {
+    method: "PUT",
+    headers: { "Content-Type": contentType },
+    body: file,
+  });
+  if (!put.ok) throw new Error(`Upload to S3 failed (${put.status})`);
+
+  return request(`/requests/${encodeURIComponent(requestId)}/review-docs/confirm`, {
+    method: "POST",
+    body: JSON.stringify({ review_type: reviewType, filename, kind }),
+  });
 }

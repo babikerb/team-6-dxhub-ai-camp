@@ -26,9 +26,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from handlers import (
     admin_patch,
+    ati_report,
     chatbot_assist,
     chatbot_converse,
     chatbot_find_document,
+    chatbot_identify,
     chatbot_match,
     chatbot_parse,
     chatbot_patch,
@@ -36,6 +38,7 @@ from handlers import (
     get_request,
     get_review_docs,
     list_requests,
+    review_upload,
     security_report,
 )
 
@@ -146,6 +149,44 @@ async def chatbot_assist_route(request: Request):
 async def chatbot_match_route(request: Request):
     event = await _to_event(request)
     return _from_lambda_response(chatbot_match.handler(event))
+
+
+@app.post("/chatbot/identify-software")
+async def chatbot_identify_route(request: Request):
+    event = await _to_event(request)
+    return _from_lambda_response(chatbot_identify.handler(event))
+
+
+@app.post("/requests/{request_id}/review-docs/upload-url")
+async def review_upload_url_route(request: Request, request_id: str):
+    event = await _to_event(request, {"id": request_id})
+    return _from_lambda_response(review_upload.upload_url_handler(event))
+
+
+@app.post("/requests/{request_id}/review-docs/confirm")
+async def review_upload_confirm_route(request: Request, request_id: str):
+    event = await _to_event(request, {"id": request_id})
+    return _from_lambda_response(review_upload.confirm_handler(event))
+
+
+@app.post("/requests/{request_id}/ati-documents")
+async def ati_documents_route(request_id: str):
+    """Step 1 — retrieve vendor documents. Synchronous: web searches only."""
+    event = {"pathParameters": {"id": request_id}}
+    return _from_lambda_response(ati_report.documents_handler(event))
+
+
+@app.post("/requests/{request_id}/ati-report")
+async def ati_report_route(request_id: str, background_tasks: BackgroundTasks):
+    """Step 2 — generate the draft review."""
+    event = {"pathParameters": {"id": request_id}}
+    lambda_response = ati_report.handler(event)
+    if lambda_response["statusCode"] == 202:
+        # handler() marked it pending and (in real Lambda only) fired the async
+        # worker invoke, which no-ops locally -- background it here instead so
+        # local dev actually completes the report.
+        background_tasks.add_task(ati_report.generate_and_save, request_id)
+    return _from_lambda_response(lambda_response)
 
 
 @app.post("/chatbot/find-document")

@@ -36,9 +36,26 @@ function normalize(s) {
   return s.toLowerCase().trim().replace(/[^a-z0-9\s]/g, "").replace(/\s+/g, " ");
 }
 
+// Whole-word containment, NOT raw substring.
+//
+// A raw substring test matched "Canva" (a design tool) to "Canvas" (the LMS) --
+// "canvas".includes("canva") is true. Different products entirely, and Canva is
+// the most-requested non-catalog product in the historical data (38 requests),
+// so that misfire would have told every one of those requesters that SDSU
+// already provides it, and short-circuited their request into the wrong product.
+//
+// Whole-word matching still catches what the substring rule was actually for:
+// the query "Adobe Photoshop" contains the whole word "photoshop" (an alias of
+// Creative Cloud), while "canvas" does NOT contain the whole word "canva".
+function containsWord(haystack, needle) {
+  if (!haystack || !needle) return false;
+  const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(^|\\s)${escaped}(\\s|$)`).test(haystack);
+}
+
 // Returns catalog entries that plausibly satisfy the requester's stated software
-// need, ranked by confidence. Matches on exact/substring name hits and on the
-// aliases list (so "Google Docs" surfaces "Google Workspace", etc).
+// need, ranked by confidence. Matches on exact name hits, whole-word name hits,
+// and the aliases list (so "Google Docs" surfaces "Google Workspace", etc).
 export function matchCatalog(query) {
   const q = normalize(query || "");
   if (q.length < 3) return [];
@@ -48,16 +65,16 @@ export function matchCatalog(query) {
     const name = normalize(entry.name);
     let score = 0;
 
-    // Substring checks require a minimum length so short names/aliases (e.g. "SAS",
+    // Word checks require a minimum length so short names/aliases (e.g. "SAS",
     // "word") don't false-match unrelated software that merely contains those letters
     // (e.g. "Kansas", "Wordament") — only an exact typed match should flag those.
     if (q === name) score = Math.max(score, 100);
-    else if (name.length >= 4 && (q.includes(name) || name.includes(q))) score = Math.max(score, 80);
+    else if (name.length >= 4 && (containsWord(q, name) || containsWord(name, q))) score = Math.max(score, 80);
 
     for (const alias of entry.aliases) {
       const a = normalize(alias);
       if (q === a) score = Math.max(score, 90);
-      else if (a.length >= 5 && (q.includes(a) || a.includes(q))) score = Math.max(score, 60);
+      else if (a.length >= 5 && (containsWord(q, a) || containsWord(a, q))) score = Math.max(score, 60);
     }
 
     if (score > 0) scored.push({ ...entry, score });

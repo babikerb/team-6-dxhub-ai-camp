@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
-import { listRequests, getReviewDocs } from "../../api.js";
+import { useNavigate } from "react-router-dom";
+import { listRequests } from "../../api.js";
 import RequestDetail from "./RequestDetail.jsx";
 import { STATUS_ORDER, STATUS_LABELS, statusLabel } from "./statusConfig.js";
 import { effectiveFlags } from "./flagsUtil.js";
@@ -19,6 +20,14 @@ const C = {
   mono: "'IBM Plex Mono', monospace",
   serif: "'Source Serif 4', serif",
 };
+
+// The three review dashboards reachable from each row. Order matches the
+// flag columns so the eye tracks across the row consistently.
+const REVIEW_DASHBOARDS = [
+  { type: "ati", label: "ATI Dashboard" },
+  { type: "itso", label: "Security Dashboard" },
+  { type: "integration", label: "Data Integration Dashboard" },
+];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -208,139 +217,14 @@ function emptyRequestor(requestor) {
   return requestor && typeof requestor === "object" ? requestor : {};
 }
 
-// ── Review document cell ──────────────────────────────────────────────────────
-// One line per review type (ATI / ITSO / INT, plus AI once the backend sends
-// it) so the column never grows past 4 lines regardless of file count.
-const reviewDocStyles = {
-  row: {
-    display: "flex",
-    alignItems: "center",
-    gap: "5px",
-    lineHeight: "1.5",
-  },
-  label: {
-    fontFamily: C.mono,
-    fontSize: "10.5px",
-    fontWeight: 700,
-    letterSpacing: "0.04em",
-    color: C.stone,
-    flexShrink: 0,
-    width: "34px",
-    whiteSpace: "nowrap",
-  },
-  pendingText: {
-    fontFamily: C.mono,
-    fontSize: "10.5px",
-    color: C.stoneLight,
-    fontStyle: "italic",
-  },
-  noDocsText: {
-    fontFamily: C.mono,
-    fontSize: "10.5px",
-    color: "#B5650B",
-    fontStyle: "italic",
-  },
-  link: {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: "3px",
-    fontFamily: C.mono,
-    fontSize: "10.5px",
-    fontWeight: 600,
-    color: C.red,
-    textDecoration: "none",
-    minWidth: 0,
-  },
-  linkText: {
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
-    maxWidth: "150px",
-  },
-};
-
-function ReviewDocFileLink({ file }) {
-  const [hovered, setHovered] = useState(false);
-  return (
-    <a
-      href={file.url}
-      download={file.name}
-      target="_blank"
-      rel="noreferrer"
-      aria-label={`Download ${file.name}`}
-      title={`Download ${file.name}`}
-      style={{
-        ...reviewDocStyles.link,
-        textDecoration: hovered ? "underline" : "none",
-      }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
-      <span style={reviewDocStyles.linkText}>{file.name}</span>
-      <span aria-hidden="true">↓</span>
-    </a>
-  );
-}
-
-function ReviewDocLine({ label, reviewSection }) {
-  if (!reviewSection || reviewSection.status === "pending") {
-    return (
-      <div style={reviewDocStyles.row}>
-        <span style={reviewDocStyles.label}>{label}:</span>
-        <span
-          style={reviewDocStyles.pendingText}
-          title="Review in progress, gathering documents"
-        >
-          pending
-        </span>
-      </div>
-    );
-  }
-
-  const { status, message, files = [] } = reviewSection;
-
-  if (status === "no_docs" || files.length === 0) {
-    return (
-      <div style={reviewDocStyles.row}>
-        <span style={reviewDocStyles.label}>{label}:</span>
-        <span style={reviewDocStyles.noDocsText} title={message}>
-          no docs
-        </span>
-      </div>
-    );
-  }
-
-  // status === "complete" with at least one file — one line per review type,
-  // so only the first file gets a link here (full list lives in the detail panel).
-  return (
-    <div style={reviewDocStyles.row}>
-      <span style={reviewDocStyles.label}>{label}:</span>
-      <ReviewDocFileLink file={files[0]} />
-    </div>
-  );
-}
-
-function ReviewDocsCell({ reviewDocs }) {
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
-      <ReviewDocLine label="ATI" reviewSection={reviewDocs?.ati} />
-      <ReviewDocLine label="ITSO" reviewSection={reviewDocs?.itso} />
-      <ReviewDocLine label="INT" reviewSection={reviewDocs?.integration} />
-      {reviewDocs?.ai && <ReviewDocLine label="AI" reviewSection={reviewDocs.ai} />}
-    </div>
-  );
-}
-
 // ── Main component ────────────────────────────────────────────────────────────
 export default function AdminDashboard() {
+  const navigate = useNavigate();
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [hoveredId, setHoveredId] = useState(null);
-  // reviewDocs: { [request_id]: { ati, itso, integration } }
-  // Populated by parallel GET /review-docs calls after the request list loads.
-  const [reviewDocs, setReviewDocs] = useState({});
 
   const [filterStatus, setFilterStatus] = useState("");
   const [filterFlag, setFilterFlag] = useState("");
@@ -360,21 +244,7 @@ export default function AdminDashboard() {
       const items = Array.isArray(data.items) ? data.items : [];
       setRequests(items);
       setError(null);
-      // Table renders now — review-doc status (one S3/Dynamo lookup per
-      // request) loads separately below so it never delays the initial render.
       if (!silent) setLoading(false);
-
-      // Failures per-request are swallowed so one bad item can't break the table.
-      const results = await Promise.allSettled(
-        items.map((r) => getReviewDocs(r.request_id))
-      );
-      const docsMap = {};
-      results.forEach((result, i) => {
-        if (result.status === "fulfilled") {
-          docsMap[items[i].request_id] = result.value.review_docs;
-        }
-      });
-      setReviewDocs(docsMap);
     } catch (err) {
       if (!silent) {
         setError(err.message || "Could not load requests.");
@@ -432,25 +302,18 @@ export default function AdminDashboard() {
 
   const sorted = [...filtered].sort(SORT_COMPARATORS[sortBy] || SORT_COMPARATORS.newest);
 
-  function handleSaved(updatedRequest) {
-    setRequests((prev) =>
-      prev.map((r) => (r.request_id === updatedRequest.request_id ? updatedRequest : r))
-    );
-    // Re-fetch live review docs for the updated request so the table stays current.
-    getReviewDocs(updatedRequest.request_id)
-      .then((data) =>
-        setReviewDocs((prev) => ({ ...prev, [updatedRequest.request_id]: data.review_docs }))
-      )
-      .catch(() => {}); // best-effort
-    setSelectedId(null);
-  }
-
-  // Like handleSaved, but keeps the detail panel open -- used when the
-  // security report finishes generating/regenerating in the background.
+  // Refresh a request in the list but keep the detail panel open -- used when
+  // the security report finishes generating in the background, where closing
+  // the panel would throw the reviewer out mid-task.
   function handleRefreshed(updatedRequest) {
     setRequests((prev) =>
       prev.map((r) => (r.request_id === updatedRequest.request_id ? updatedRequest : r))
     );
+  }
+
+  function handleSaved(updatedRequest) {
+    handleRefreshed(updatedRequest);
+    setSelectedId(null);
   }
 
   const selected = requests.find((r) => r.request_id === selectedId) ?? null;
@@ -574,14 +437,16 @@ export default function AdminDashboard() {
 
         <div style={styles.tableWrapper}>
           <table style={styles.table}>
+            {/* table-layout is fixed, so every column needs a <col> here — a
+                column without one collapses to zero width. Widths total 100%. */}
             <colgroup>
-              <col style={{ width: "15%" }} />
-              <col style={{ width: "12%" }} />
-              <col style={{ width: "12%" }} />
-              <col style={{ width: "19%" }} />
-              <col style={{ width: "17%" }} />
-              <col style={{ width: "11%" }} />
-              <col style={{ width: "14%" }} />
+              <col style={{ width: "15%" }} /> {/* Software */}
+              <col style={{ width: "13%" }} /> {/* Requestor */}
+              <col style={{ width: "12%" }} /> {/* Department */}
+              <col style={{ width: "15%" }} /> {/* Status */}
+              <col style={{ width: "16%" }} /> {/* Flags */}
+              <col style={{ width: "10%" }} /> {/* Risk */}
+              <col style={{ width: "19%" }} /> {/* Reviews */}
             </colgroup>
             <thead>
               <tr>
@@ -591,7 +456,7 @@ export default function AdminDashboard() {
                 <th style={styles.th}>Status</th>
                 <th style={{ ...styles.th, paddingLeft: "24px" }}>Flags</th>
                 <th style={styles.th}>Risk</th>
-                <th style={styles.th}>Review Docs</th>
+                <th style={styles.th}>Reviews</th>
               </tr>
             </thead>
             <tbody>
@@ -620,7 +485,6 @@ export default function AdminDashboard() {
                   // Use live review-docs data fetched from the endpoint; fall
                   // back to whatever is on the DynamoDB record if the fetch
                   // hasn't completed yet or failed for this request.
-                  const liveReviewDocs = reviewDocs[r.request_id] || r.review_docs || {};
                   return (
                     <tr
                       key={r.request_id}
@@ -668,8 +532,21 @@ export default function AdminDashboard() {
                           <span style={{ color: C.stone, fontSize: "12px" }}>Pending</span>
                         )}
                       </td>
+                      {/* stopPropagation: the row itself opens the detail panel,
+                          and these buttons navigate somewhere else entirely. */}
                       <td style={styles.td} onClick={(e) => e.stopPropagation()}>
-                        <ReviewDocsCell reviewDocs={liveReviewDocs} />
+                        <div style={styles.reviewBtns}>
+                          {REVIEW_DASHBOARDS.map((d) => (
+                            <button
+                              key={d.type}
+                              style={styles.reviewBtn}
+                              title={`Open the ${d.label} for this request`}
+                              onClick={() => navigate(`/admin/${r.request_id}/review/${d.type}`)}
+                            >
+                              {d.label}
+                            </button>
+                          ))}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -866,6 +743,28 @@ const styles = {
     width: "100%",
     tableLayout: "fixed",
     borderCollapse: "collapse",
+  },
+  reviewBtns: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "stretch",
+    gap: "4px",
+    minWidth: "150px",
+  },
+  reviewBtn: {
+    fontFamily: C.mono,
+    fontSize: "10.5px",
+    fontWeight: 700,
+    color: C.ink,
+    backgroundColor: C.white,
+    border: `1px solid ${C.line}`,
+    paddingTop: "6px",
+    paddingRight: "8px",
+    paddingBottom: "6px",
+    paddingLeft: "8px",
+    cursor: "pointer",
+    textAlign: "left",
+    whiteSpace: "nowrap",
   },
   th: {
     padding: "12px 16px",

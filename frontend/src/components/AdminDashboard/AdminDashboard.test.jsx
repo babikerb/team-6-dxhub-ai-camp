@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { MOCK_REQUESTS } from './mockData.js';
 import AdminDashboard from './AdminDashboard.jsx';
 import RequestDetail from './RequestDetail.jsx';
@@ -10,10 +11,19 @@ vi.mock('../../api.js', () => ({
   getReviewDocs: vi.fn(),
 }));
 
+// The Reviews column navigates to a review dashboard; assert on where it goes
+// rather than rendering that whole screen.
+const mockNavigate = vi.fn();
+vi.mock('react-router-dom', async (importOriginal) => ({
+  ...(await importOriginal()),
+  useNavigate: () => mockNavigate,
+}));
+
 import { listRequests, patchAdmin, getReviewDocs } from '../../api.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockNavigate.mockClear();
   listRequests.mockResolvedValue({ items: MOCK_REQUESTS, count: MOCK_REQUESTS.length });
   patchAdmin.mockImplementation(async (_id, payload) => {
     const base = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
@@ -37,7 +47,7 @@ beforeEach(() => {
 });
 
 async function renderDashboard() {
-  render(<AdminDashboard />);
+  render(<AdminDashboard />, { wrapper: MemoryRouter });
   await waitFor(() => {
     expect(screen.getByText('CampusHealth360')).toBeInTheDocument();
   });
@@ -180,7 +190,7 @@ describe('AdminDashboard — list view', () => {
       requestor: { ...MOCK_REQUESTS[0].requestor, software_name: 'LegacyTool' },
     };
     listRequests.mockResolvedValue({ items: [legacy], count: 1 });
-    render(<AdminDashboard />);
+    render(<AdminDashboard />, { wrapper: MemoryRouter });
     await waitFor(() => expect(screen.getByText('LegacyTool')).toBeInTheDocument());
     expect(screen.getByText('FLAGSCOMPUTED')).toBeInTheDocument();
   });
@@ -433,122 +443,46 @@ describe('RequestDetail — override validation', () => {
 });
 
 
-// ── AdminDashboard — review document columns ──────────────────────────────────
+// ── AdminDashboard — review dashboard buttons ─────────────────────────────────
+// Replaces the old "Review Docs" column tests. That column showed per-type
+// document status inline and was removed: the three review dashboards own that
+// now (see ReviewDashboard.jsx, column 1), and the extra column overflowed the
+// table.
 
-describe('AdminDashboard — review document columns', () => {
-  it('renders Review Docs column header', async () => {
+describe('AdminDashboard — review dashboard buttons', () => {
+  it('renders the Reviews column header', async () => {
     await renderDashboard();
-    expect(screen.getByText('Review Docs')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Reviews' })).toBeInTheDocument();
   });
 
-  it('shows "pending" text for requests with no review docs (aaa-001)', async () => {
+  it('no longer renders the Review Docs column', async () => {
     await renderDashboard();
-    // aaa-001 has all three as pending
-    const pendingText = screen.getAllByTitle('Review in progress, gathering documents');
-    expect(pendingText.length).toBeGreaterThan(0);
-    expect(screen.getAllByText('ATI:').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Review Docs')).not.toBeInTheDocument();
   });
 
-  it('shows "no docs" text for ITSO no_docs state (ccc-003)', async () => {
-    await renderDashboard();
-    expect(screen.getAllByText('ITSO:').length).toBeGreaterThan(0);
-    const noDocsText = screen.getAllByText('no docs');
-    expect(noDocsText.length).toBeGreaterThan(0);
-  });
-
-  it('shows "no docs" text for Integration no_docs state (bbb-002)', async () => {
-    await renderDashboard();
-    expect(screen.getAllByText('INT:').length).toBeGreaterThan(0);
-    const noDocsText = screen.getAllByText('no docs');
-    expect(noDocsText.length).toBeGreaterThan(0);
-  });
-
-  it('shows a download link for the first ATI doc only (bbb-002 has privacy_policy.pdf and vpat.pdf)', async () => {
-    await renderDashboard();
-    // Only the first file per review type is linked in the table row —
-    // the rest are available from the detail panel. Scope to bbb-002's row
-    // since other mock records reuse filenames like "vpat.pdf" for their own first file.
-    const row = screen.getByText('CampusHealth360').closest('tr');
-    expect(within(row).getByLabelText('Download privacy_policy.pdf')).toBeInTheDocument();
-    expect(within(row).queryByLabelText('Download vpat.pdf')).not.toBeInTheDocument();
-  });
-
-  it('shows a download link for the first ITSO doc only (bbb-002 has hecvat.pdf)', async () => {
+  it('renders all three dashboard buttons on every row', async () => {
     await renderDashboard();
     const row = screen.getByText('CampusHealth360').closest('tr');
-    expect(within(row).getByLabelText('Download hecvat.pdf')).toBeInTheDocument();
-    expect(within(row).queryByLabelText('Download soc2.pdf')).not.toBeInTheDocument();
-    expect(within(row).queryByLabelText('Download terms_of_service.pdf')).not.toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'ATI Dashboard' })).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Security Dashboard' })).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Data Integration Dashboard' })).toBeInTheDocument();
   });
 
-  it('download link href matches the presigned URL in mock data', async () => {
+  it('navigates to that request\'s review dashboard, not the detail panel', async () => {
     await renderDashboard();
-    const links = screen.getAllByLabelText('Download privacy_policy.pdf');
-    const hrefs = links.map((l) => l.getAttribute('href'));
-    expect(hrefs).toContain('https://example.s3.amazonaws.com/presigned/privacy_policy.pdf');
-  });
+    const row = screen.getByText('CampusHealth360').closest('tr');
+    const requestId = MOCK_REQUESTS.find((r) => r.requestor.software_name === 'CampusHealth360').request_id;
 
-  it('download links open in a new tab (target=_blank)', async () => {
-    await renderDashboard();
-    const links = screen.getAllByLabelText('Download privacy_policy.pdf');
-    links.forEach((l) => expect(l.getAttribute('target')).toBe('_blank'));
+    fireEvent.click(within(row).getByRole('button', { name: 'ATI Dashboard' }));
+
+    expect(mockNavigate).toHaveBeenCalledWith(`/admin/${requestId}/review/ati`);
+    // The row itself opens the detail panel; the buttons must not trigger it.
+    expect(screen.queryByText('Override & Admin Notes')).not.toBeInTheDocument();
   });
 });
 
-// ── RequestDetail — review documents section ──────────────────────────────────
 
-describe('RequestDetail — review documents section', () => {
-  const noop = vi.fn();
-
-  it('renders the Review Documents section heading', () => {
-    const req = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
-    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
-    expect(screen.getByText('Review Documents')).toBeInTheDocument();
-  });
-
-  it('shows ATI Docs, ITSO Docs, and Integration Docs row labels', () => {
-    const req = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
-    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
-    expect(screen.getByText('ATI Docs')).toBeInTheDocument();
-    expect(screen.getByText('ITSO Docs')).toBeInTheDocument();
-    expect(screen.getByText('Integration Docs')).toBeInTheDocument();
-  });
-
-  it('shows download links for complete ATI docs in the detail panel', () => {
-    const req = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
-    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
-    // bbb-002 has ATI complete with vpat.pdf and privacy_policy.pdf
-    const links = screen.getAllByLabelText(/Download vpat\.pdf/i);
-    expect(links.length).toBeGreaterThanOrEqual(1);
-  });
-
-  it('shows "No documents found" for Integration no_docs in detail panel (bbb-002)', () => {
-    const req = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
-    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
-    expect(screen.getAllByText('No documents found').length).toBeGreaterThan(0);
-  });
-
-  it('shows "Review in progress, gathering documents" for pending type in detail panel', () => {
-    const req = MOCK_REQUESTS.find((r) => r.request_id === 'aaa-001');
-    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
-    const pending = screen.getAllByText('Review in progress, gathering documents');
-    // aaa-001 has all three pending
-    expect(pending.length).toBeGreaterThanOrEqual(3);
-  });
-
-  it('shows "No documents found. Contact vendor" for ITSO no_docs (ccc-003)', () => {
-    const req = MOCK_REQUESTS.find((r) => r.request_id === 'ccc-003');
-    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
-    expect(screen.getAllByText('No documents found. Contact vendor').length).toBeGreaterThan(0);
-  });
-
-  it('shows pending state for all three types when review_docs is absent', () => {
-    const req = {
-      ...MOCK_REQUESTS[0],
-      review_docs: undefined,
-    };
-    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
-    const pending = screen.getAllByText('Review in progress, gathering documents');
-    expect(pending.length).toBeGreaterThanOrEqual(3);
-  });
-});
+// The RequestDetail 'Review Documents' section was removed: the three review
+// dashboards own documents now (ReviewDashboard column 1 lists the same files
+// with downloads AND uploads, which this section never had). Its tests went
+// with it — see 'AdminDashboard — review dashboard buttons' above.
