@@ -110,6 +110,8 @@ export const MOCK_REQUESTS = [
       security_flag_reason: "Level 1 data: HIPAA, PII",
       integration_flag: true,
       integration_flag_reason: "Shares data with campus system: PeopleSoft student information system",
+      ai_flag: true,
+      ai_flag_reason: "AI-enabled automated decision system — California ADS inventory (AB 302)",
       risk_level: "High",
     },
     admin: {
@@ -410,6 +412,8 @@ export const MOCK_REQUESTS = [
       security_flag_reason: "No Level 1 or Level 2 data identified",
       integration_flag: false,
       integration_flag_reason: "No campus system integration required",
+      ai_flag: false,
+      ai_flag_reason: "No AI capabilities reported",
       risk_level: "Low",
     },
     admin: {

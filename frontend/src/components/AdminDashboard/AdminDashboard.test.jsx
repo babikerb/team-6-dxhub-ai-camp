@@ -136,6 +136,21 @@ describe('AdminDashboard — list view', () => {
     expect(screen.queryByText('SEC')).not.toBeInTheDocument();
   });
 
+  it('renders an AI/ADS pill for every request', async () => {
+    await renderDashboard();
+    expect(screen.getAllByText('AI').length).toBe(MOCK_REQUESTS.length);
+  });
+
+  it('filters requests by AI/ADS flag', async () => {
+    await renderDashboard();
+    const select = screen.getByLabelText('Filter by flag');
+    fireEvent.change(select, { target: { value: 'ai' } });
+    // Only CampusHealth360 has ai_flag: true in the mock data.
+    expect(screen.getByText('CampusHealth360')).toBeInTheDocument();
+    expect(screen.queryByText('AutoCAD LT')).not.toBeInTheDocument();
+    expect(screen.queryByText('ResearchTrack Pro')).not.toBeInTheDocument();
+  });
+
   it('marks a flagged-and-completed review with a "Review completed" pill', async () => {
     await renderDashboard();
     // bbb-002 has security_flag true + review_completions.security_flag true

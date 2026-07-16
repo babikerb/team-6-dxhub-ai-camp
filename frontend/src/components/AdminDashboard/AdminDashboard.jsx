@@ -227,6 +227,7 @@ export default function AdminDashboard() {
       if (filterFlag === "ati" && !effective.ati.value) return false;
       if (filterFlag === "security" && !effective.security.value) return false;
       if (filterFlag === "integration" && !effective.integration.value) return false;
+      if (filterFlag === "ai" && !effective.ai.value) return false;
     }
     if (filterDept && requestor.department !== filterDept) return false;
     if (search) {
@@ -307,6 +308,7 @@ export default function AdminDashboard() {
             <option value="ati">ATI flagged</option>
             <option value="security">ITSO flagged</option>
             <option value="integration">Integration flagged</option>
+            <option value="ai">AI / ADS flagged</option>
           </select>
 
           <select
@@ -437,6 +439,7 @@ export default function AdminDashboard() {
                         <FlagPill value={effective.ati.value} overridden={effective.ati.overridden} completed={effective.ati.completed} label="ATI" />
                         <FlagPill value={effective.security.value} overridden={effective.security.overridden} completed={effective.security.completed} label="ITSO" />
                         <FlagPill value={effective.integration.value} overridden={effective.integration.overridden} completed={effective.integration.completed} label="INT" />
+                        <FlagPill value={effective.ai.value} overridden={effective.ai.overridden} completed={effective.ai.completed} label="AI" />
                       </td>
                       <td style={styles.td}>
                         {flags.risk_level ? (
