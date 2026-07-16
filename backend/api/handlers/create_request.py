@@ -42,6 +42,7 @@ def handler(event, context=None):
         },
         "it_review": {},
         "flags": {},
+        "notifications": {},
         "admin": {
             "overrides": {
                 "ati_flag": None,

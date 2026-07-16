@@ -31,6 +31,16 @@ Parameters:
     Description: SES-verified "From" address used to send request notification emails.
     Default: sdsusoftwarerequest@gmail.com
 
+  FrontendBaseUrl:
+    Type: String
+    Description: Base URL of the frontend used in email links (no trailing slash).
+    Default: http://localhost:5173
+
+  ReminderDelayMinutes:
+    Type: String
+    Description: Minutes to wait after form submit before sending the chatbot reminder email.
+    Default: "5"
+
 Globals:
   Function:
     Runtime: python3.12
@@ -40,6 +50,10 @@ Globals:
       Variables:
         TABLE_NAME: !Ref SoftwareRequestsTableName
         REVIEW_DOCS_BUCKET: !Ref ReviewDocsBucketName
+        SES_SOURCE_EMAIL: !Ref SesSourceEmail
+        FRONTEND_BASE_URL: !Ref FrontendBaseUrl
+        EMAILS_DISABLED: "false"
+        REMINDER_DELAY_MINUTES: !Ref ReminderDelayMinutes
 
 Resources:
 
@@ -110,6 +124,12 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref SoftwareRequestsTableName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+              Resource: "*"
       Events:
         Api:
           Type: Api
@@ -124,6 +144,7 @@ Resources:
     Properties:
       CodeUri: ..
       Handler: api.handlers.chatbot_patch.handler
+      Timeout: 60
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref SoftwareRequestsTableName
@@ -135,11 +156,14 @@ Resources:
                 - ses:SendEmail
                 - ses:SendRawEmail
               Resource: "*"
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+              Resource: "*"
       Environment:
         Variables:
           SECURITY_REPORT_WORKER_FUNCTION_NAME: !Ref SecurityReportWorkerFunction
-          EMAILS_DISABLED: "false"
-          SES_SOURCE_EMAIL: !Ref SesSourceEmail
       Events:
         Api:
           Type: Api
@@ -147,6 +171,30 @@ Resources:
             RestApiId: !Ref SoftwareRequestsApi
             Path: /requests/{id}/chatbot
             Method: PATCH
+
+  # ---- Chatbot reminder (Email 1) — every minute ---------------------------
+  ReminderCheckFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ..
+      Handler: api.handlers.reminder_check.handler
+      Timeout: 60
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SoftwareRequestsTableName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+              Resource: "*"
+      Events:
+        Schedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(1 minute)
+            Description: Send chatbot reminder emails for stale Submitted requests
+            Enabled: true
 
   # ---- Chatbot Bedrock helpers (answer parsing, conversation, web search) --
   ChatbotParseFunction:
