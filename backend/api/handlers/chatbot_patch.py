@@ -6,6 +6,11 @@ TEMPORARY: flags are computed with store._stub_compute_flags(). Swap this
 for `from rules_engine.rules_engine import compute_flags` once Person 4
 delivers backend/rules_engine/ -- same input/output shape, no other changes
 needed here.
+
+If security_flag comes back true, this marks security_review.status="pending"
+synchronously so the dashboard reflects it immediately -- the actual report
+generation runs afterward as a background task (local_server.py's
+chatbot_patch_route), never blocking the requester's submission.
 """
 
 from . import store
@@ -36,6 +41,8 @@ def handler(event, context=None):
     record["flags"] = flags
     record["status"] = "ITReview"
     record["updated_at"] = store.now_iso()
+    if flags.get("security_flag"):
+        record["security_review"] = {"status": "pending"}
 
     store.save_request(record)
     return store.response(200, record)

@@ -15,7 +15,7 @@ Then hit http://localhost:8000 -- see README.md for endpoint list + curl example
 import json
 
 import uvicorn
-from fastapi import FastAPI, Request, Response
+from fastapi import BackgroundTasks, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from handlers import (
@@ -29,6 +29,7 @@ from handlers import (
     create_request,
     get_request,
     list_requests,
+    security_report,
 )
 
 app = FastAPI(title="SoftwareRequests API (local mock)")
@@ -80,9 +81,22 @@ async def get_request_route(request: Request, request_id: str):
 
 
 @app.patch("/requests/{request_id}/chatbot")
-async def chatbot_patch_route(request: Request, request_id: str):
+async def chatbot_patch_route(request: Request, request_id: str, background_tasks: BackgroundTasks):
     event = await _to_event(request, {"id": request_id})
-    return _from_lambda_response(chatbot_patch.handler(event))
+    lambda_response = chatbot_patch.handler(event)
+    if lambda_response["statusCode"] == 200:
+        body = json.loads(lambda_response["body"])
+        if body.get("flags", {}).get("security_flag"):
+            # Fire-and-forget: the requester's response returns immediately;
+            # the report finishes writing to DynamoDB on its own afterward.
+            background_tasks.add_task(security_report.generate_and_save, request_id)
+    return _from_lambda_response(lambda_response)
+
+
+@app.post("/requests/{request_id}/security-report")
+async def security_report_route(request_id: str):
+    event = {"pathParameters": {"id": request_id}}
+    return _from_lambda_response(security_report.handler(event))
 
 
 @app.patch("/requests/{request_id}/admin")
