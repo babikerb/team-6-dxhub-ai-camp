@@ -54,7 +54,7 @@ import precedent  # noqa: E402  -- RC step 5 lookup
 
 # The reviewer pulls the correct VPAT by hand when a vendor publishes several
 # (Infrastructure had 9), so we hand off the accessibility PAGE rather than
-# guessing a file. See HANDOFF_DOCS in parse.py -- same decision, same reason.
+# guessing a file. See NO_GUESS_DOCS in parse.py -- same decision, same reason.
 ATI_DOC_TYPES = ["vpat", "privacy_policy", "terms_of_service"]
 
 # it_review fields where the chatbot may already have collected a document, so
