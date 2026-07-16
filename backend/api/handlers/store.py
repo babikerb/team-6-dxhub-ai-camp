@@ -213,3 +213,44 @@ def _stub_compute_flags(it_review: dict, scope_of_usage: str | None = None) -> d
         "ai_flag_reason": ai_reason,
         "risk_level": risk_level,
     }
+
+
+# Median business days from submission to a closed decision, by risk level --
+# computed from 766 closed tickets in data/sc_req_item (7.7.2026).xlsx
+# (Initial risk analysis guidance vs. Business duration). Low Risk skews very
+# short (lots of same-day approvals); Medium/High take longer due to
+# ATI/Security/Integration review. Recompute if that export is refreshed.
+_MEDIAN_DAYS_TO_DECISION = {
+    "Low": 2,
+    "Medium": 3,
+    "High": 10,
+}
+
+_TERMINAL_STATUSES = {"Approved", "Denied"}
+
+
+def estimate_days_remaining(record: dict) -> int | None:
+    """Rough ETA (in days) to a decision, based on risk level and how long
+    the request has already been open. Returns None once a decision has
+    already been made, or if risk_level/created_at aren't available.
+    """
+    if record.get("status") in _TERMINAL_STATUSES:
+        return None
+
+    risk_level = (record.get("flags") or {}).get("risk_level")
+    baseline_days = _MEDIAN_DAYS_TO_DECISION.get(risk_level)
+    if baseline_days is None:
+        return None
+
+    created_at = record.get("created_at")
+    if not created_at:
+        return None
+    try:
+        created = datetime.fromisoformat(created_at)
+    except ValueError:
+        return None
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+
+    elapsed_days = (datetime.now(timezone.utc) - created).total_seconds() / 86400
+    return max(0, round(baseline_days - elapsed_days))

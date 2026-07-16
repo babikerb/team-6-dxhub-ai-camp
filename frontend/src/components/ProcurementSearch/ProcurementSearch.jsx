@@ -38,6 +38,16 @@ function formatDate(iso) {
   return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
+// estimated_days_remaining is null once a decision's been made, or if we
+// don't have enough info (e.g. risk level not yet computed) to estimate.
+function formatEta(record) {
+  if (record.status === "Approved" || record.status === "Denied") return "Decision made";
+  const days = record.estimated_days_remaining;
+  if (days === null || days === undefined) return "—";
+  if (days <= 0) return "Any day now";
+  return days === 1 ? "About 1 day" : `About ${days} days`;
+}
+
 function DetailRow({ label, value }) {
   return (
     <div style={styles.detailRow}>
@@ -188,6 +198,7 @@ function ProcurementSearch() {
                 <DetailRow label="Department" value={record.requestor?.department} />
                 <DetailRow label="Submitted" value={formatDate(record.created_at)} />
                 <DetailRow label="Last updated" value={formatDate(record.updated_at)} />
+                <DetailRow label="Estimated time left" value={formatEta(record)} />
               </div>
 
               <button type="button" onClick={searchAnother} style={styles.searchButton}>
