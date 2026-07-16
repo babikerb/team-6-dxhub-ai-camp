@@ -485,21 +485,28 @@ function IntakeForm({ onSubmitted }) {
       const showed = await runCatalogChecks();
       if (showed) return;
 
-      // 3) Spelling check — only interrupts if we couldn't find a real product by
-      //    this name at all, so a typo gets caught before the rest of the form
-      //    assumes it. Skipped once confirmed so Back/Next doesn't re-ask.
+      // 3) Confirm the product: "Canva — online design platform. Is that right?"
+      //
+      //    Always shown, not only when the name looks like a typo. It costs a
+      //    click and the click is the point: the requester is the only person
+      //    who can settle Canva vs Canvas, and this is the last moment they're
+      //    looking at the question. It also answers "what does this software
+      //    actually do?" for the reviewer, which is otherwise step 6 of their
+      //    manual checklist.
+      //
+      //    Runs after the catalog checks — no sense confirming a product SDSU
+      //    already provides. Skipped once confirmed so Back/Next doesn't re-ask.
+      //    renderConfirmSoftware() handles both cases: the identified product,
+      //    and the "we couldn't find this one" spelling prompt.
       if (!identityConfirmed) {
         setChecking(true);
         try {
           const id = await identifySoftware(
             form.software_name, form.use_description, form.vendor_website,
           );
-          if (!id.identified) {
-            setIdentity(id);
-            setView("confirmSoftware");
-            return;
-          }
-          setIdentityConfirmed(true);
+          setIdentity(id);
+          setView("confirmSoftware");
+          return;
         } catch {
           // Identify unavailable — never block the requester; carry on.
         } finally {
