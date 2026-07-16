@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { getRequest, patchAdmin, regenerateSecurityReport } from "../../api.js";
+import { patchAdmin } from "../../api.js";
 import { STATUS_ORDER, STATUS_LABELS, STATUS_DESCRIPTIONS } from "./statusConfig.js";
 
 // ── Design tokens (matches RequesterChat.jsx / IntakeForm.jsx palette + type system) ──
@@ -67,21 +67,36 @@ function Field({ label, value }) {
   );
 }
 
-// ── Flag row: shows computed flag + override side by side ─────────────────────
+// ── Flag row: a direct-manipulation segmented control IS the state display —
+// no separate Computed/Override/Effective read-only cells, no cycling toggle,
+// no edit-mode gate to open first. Clicking a segment sets that value,
+// immediately; the "Auto" segment's label always shows what the computed
+// algorithm actually says, so the computed value is never hidden even while
+// an override is active. Review completion is a visually separate control
+// (a chip, not a segment) since it's a different axis entirely — whether the
+// reviewer has finished, not what the flag's value is. ─────────────────────
 function FlagRow({
   flagKey,
   label,
   computedValue,
   computedReason,
   overrideValue,
-  onToggle,
+  onSetOverride,
   completed,
   onToggleCompleted,
   reviewable = true,
 }) {
-  const effective = overrideValue !== null ? overrideValue : computedValue;
-  const isOverridden = overrideValue !== null;
   const testIdLabel = label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const effective = overrideValue !== null ? overrideValue : computedValue;
+
+  function segmentStyle(active, flagged) {
+    return {
+      ...styles.segment,
+      background: active ? (flagged ? C.red : C.stone) : C.white,
+      color: active ? C.white : C.ink,
+      fontWeight: active ? 700 : 600,
+    };
+  }
 
   return (
     <div style={styles.flagRow}>
@@ -91,376 +106,74 @@ function FlagRow({
       </div>
 
       <div style={styles.flagRowRight}>
-        {/* Computed value */}
-        <div style={styles.flagCell}>
-          <div style={styles.flagCellLabel}>Computed</div>
-          <span style={{ ...styles.flagPill, background: computedValue ? C.red : C.stone }}>
-            {computedValue ? "Flagged" : "Clear"}
-          </span>
-        </div>
-
-        {/* Override value */}
-        <div style={styles.flagCell}>
-          <div style={styles.flagCellLabel}>Override</div>
-          <span
-            style={{
-              ...styles.flagPill,
-              background: isOverridden ? (overrideValue ? C.red : C.stone) : "transparent",
-              color: isOverridden ? C.white : C.stone,
-              border: isOverridden ? "none" : `1.5px dashed ${C.line}`,
-            }}
+        <div style={styles.segmented} role="group" aria-label={`${label} override`}>
+          <button
+            type="button"
+            data-testid={`override-auto-${testIdLabel}`}
+            style={segmentStyle(overrideValue === null, computedValue)}
+            onClick={() => onSetOverride(flagKey, null)}
           >
-            {isOverridden ? (overrideValue ? "Flagged" : "Clear") : "None"}
-          </span>
-        </div>
-
-        {/* Effective (what will be used) */}
-        <div style={styles.flagCell}>
-          <div style={styles.flagCellLabel}>Effective</div>
-          <span style={{ ...styles.flagPill, background: effective ? C.red : C.stone }}>
-            {effective ? "Flagged" : "Clear"}
-          </span>
+            Auto ({computedValue ? "Flagged" : "Clear"})
+          </button>
+          <button
+            type="button"
+            data-testid={`override-flag-${testIdLabel}`}
+            style={segmentStyle(overrideValue === true, true)}
+            onClick={() => onSetOverride(flagKey, true)}
+          >
+            Flag
+          </button>
+          <button
+            type="button"
+            data-testid={`override-clear-${testIdLabel}`}
+            style={{ ...segmentStyle(overrideValue === false, false), borderRight: "none" }}
+            onClick={() => onSetOverride(flagKey, false)}
+          >
+            Clear
+          </button>
         </div>
 
         {/* Review completion — AI/ADS is an inventory marker, not a review queue. */}
-        <div style={styles.flagCell}>
-          <div style={styles.flagCellLabel}>Review</div>
-          {reviewable ? (
-            <button
-              data-testid={`complete-${testIdLabel}`}
-              type="button"
-              disabled={!effective}
-              title={
-                !effective
-                  ? "This review does not apply (flag is clear)"
-                  : completed
-                  ? "Click to mark this review as still remaining"
-                  : "Click to mark this review as completed"
-              }
-              style={{
-                ...styles.completeButton,
-                background: effective && completed ? "#2E7D32" : C.white,
-                color: effective && completed ? C.white : C.ink,
-                border: effective && completed ? "none" : `1.5px solid ${C.line}`,
-                opacity: effective ? 1 : 0.45,
-                cursor: effective ? "pointer" : "not-allowed",
-              }}
-              onClick={() => onToggleCompleted(flagKey)}
-            >
-              {completed ? "Completed ✓" : "Remaining"}
-            </button>
-          ) : (
-            <span style={{ ...styles.completeButton, color: C.stone, border: `1.5px solid ${C.line}` }}>
-              Tracking only
-            </span>
-          )}
-        </div>
-
-        {/* Toggle button */}
-        <button
-          data-testid={`toggle-${testIdLabel}`}
-          style={{
-            ...styles.toggleButton,
-            background: overrideValue === true ? C.red : overrideValue === false ? C.stone : C.white,
-            color: overrideValue !== null ? C.white : C.ink,
-            border: overrideValue !== null ? "none" : `1.5px solid ${C.line}`,
-          }}
-          onClick={() => onToggle(flagKey)}
-          type="button"
-        >
-          {overrideValue === null
-            ? "Override"
-            : overrideValue
-            ? "Set → Clear"
-            : "Set → Flag"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ── Security Review risk badge ────────────────────────────────────────────────
-function riskTierColor(tier) {
-  if (tier === "High") return C.red;
-  if (tier === "Medium") return "#B5650B";
-  return C.stone;
-}
-
-const SOURCE_LABELS = {
-  admin_attached: "attached by reviewer",
-  requester_provided: "provided by requester",
-  auto_search: "found via web search",
-  not_found: "not found",
-};
-
-// ── One row in "Sources checked": link + how it was obtained ──────────────────
-function SourceRow({ source }) {
-  const label = source.doc_type.replace(/_/g, " ");
-  return (
-    <div style={styles.field}>
-      <span style={styles.fieldLabel}>{label}</span>
-      <span style={styles.fieldValue}>
-        {source.fetched ? (
-          <a href={source.url} target="_blank" rel="noreferrer" style={{ color: C.red }}>
-            {source.url}
-          </a>
+        {reviewable ? (
+          <button
+            data-testid={`complete-${testIdLabel}`}
+            type="button"
+            disabled={!effective}
+            title={
+              !effective
+                ? "This review does not apply (flag is clear)"
+                : completed
+                ? "Click to mark this review as still remaining"
+                : "Click to mark this review as completed"
+            }
+            style={{
+              ...styles.reviewedChip,
+              background: effective && completed ? "#EAF6EC" : C.white,
+              borderColor: effective && completed ? "#2E7D32" : C.line,
+              color: effective && completed ? "#2E7D32" : C.ink,
+              opacity: effective ? 1 : 0.45,
+              cursor: effective ? "pointer" : "not-allowed",
+            }}
+            onClick={() => onToggleCompleted(flagKey)}
+          >
+            {completed ? "✓ Reviewed" : "Review pending"}
+          </button>
         ) : (
-          <span style={{ color: C.stoneLight, fontStyle: "italic" }}>
-            {source.url ? "found but could not be fetched" : "not available"}
-          </span>
+          <span style={{ ...styles.reviewedChip, color: C.stone }}>Tracking only</span>
         )}
-        <span style={{ marginLeft: "8px", fontSize: "10.5px", color: C.stoneLight }}>
-          ({SOURCE_LABELS[source.source] || source.source})
-        </span>
-      </span>
-    </div>
-  );
-}
-
-
-// ── Attach Documents: reviewer can paste a link the requester didn't provide,
-// or that the report's auto-search couldn't find (HECVAT/SOC 2 are never
-// asked of the requester, only auto-searched — this is the only way to add
-// them). Saved links take priority over requester-provided ones next time
-// the report generates. ─────────────────────────────────────────────────────
-const DOC_TYPE_LABELS = {
-  privacy_policy: "Privacy policy",
-  terms_of_service: "Terms of service",
-  vpat: "VPAT / accessibility doc",
-  hecvat: "HECVAT",
-  soc2: "SOC 2 report",
-};
-
-function AttachDocumentsForm({ attachedDocuments, onSaveAndRegenerate, saving }) {
-  const [urls, setUrls] = useState({
-    privacy_policy: attachedDocuments?.privacy_policy || "",
-    terms_of_service: attachedDocuments?.terms_of_service || "",
-    vpat: attachedDocuments?.vpat || "",
-    hecvat: attachedDocuments?.hecvat || "",
-    soc2: attachedDocuments?.soc2 || "",
-  });
-
-  function setUrl(docType, value) {
-    setUrls((prev) => ({ ...prev, [docType]: value }));
-  }
-
-  function handleSave() {
-    const payload = {};
-    for (const [docType, value] of Object.entries(urls)) {
-      const trimmed = value.trim();
-      payload[docType] = trimmed === "" ? null : trimmed;
-    }
-    onSaveAndRegenerate(payload);
-  }
-
-  return (
-    <div style={{ marginBottom: "18px" }}>
-      <div style={styles.formLabel}>Attach documents (optional)</div>
-      <div style={{ ...styles.overrideNote, marginBottom: "10px" }}>
-        Paste a link for anything the requester didn't provide, or that the automatic search
-        couldn't find — HECVAT and SOC 2 are never asked of the requester, only searched for.
-        Saved links are used the next time the report generates.
       </div>
-      {Object.entries(DOC_TYPE_LABELS).map(([docType, label]) => (
-        <div key={docType} style={{ marginBottom: "8px" }}>
-          <label style={{ ...styles.formLabel, marginTop: 0 }}>{label}</label>
-          <input
-            style={styles.input}
-            type="text"
-            placeholder="https://..."
-            value={urls[docType]}
-            onChange={(e) => setUrl(docType, e.target.value)}
-            disabled={saving}
-          />
-        </div>
-      ))}
-      <button
-        style={{ ...styles.saveButton, opacity: saving ? 0.7 : 1 }}
-        onClick={handleSave}
-        disabled={saving}
-        type="button"
-      >
-        {saving ? "Saving…" : "Save & Regenerate"}
-      </button>
     </div>
-  );
-}
-
-// ── Security Review panel: shown only when flags.security_flag is true ────────
-function SecurityReviewPanel({ securityReview, attachedDocuments, generating, onRegenerate, onSaveAndRegenerate }) {
-  const [copied, setCopied] = useState(false);
-  const status = securityReview?.status;
-
-  async function handleCopy() {
-    try {
-      await navigator.clipboard.writeText(securityReview.servicenow_comment || "");
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // clipboard API unavailable — silently ignore, the text is still selectable
-    }
-  }
-
-  return (
-    <Section title="Security Review (Automated)">
-      {(generating || status === "pending") && (
-        <div style={styles.overrideNote}>Generating security report — searching the web for privacy policy, Terms of Service, VPAT, and HECVAT, then running the risk review. This can take up to two minutes.</div>
-      )}
-
-      {!generating && status === "failed" && (
-        <div style={styles.errorMsg}>
-          Report generation failed: {securityReview.error || "unknown error"}
-        </div>
-      )}
-
-      {!generating && (!status || status === "failed") && (
-        <button style={styles.saveButton} onClick={onRegenerate} type="button">
-          {status === "failed" ? "Retry" : "Generate report"}
-        </button>
-      )}
-
-      {!generating && status === "complete" && (
-        <>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
-            <span
-              style={{
-                ...styles.statusBadge,
-                background: riskTierColor(securityReview.risk_tier),
-              }}
-            >
-              {securityReview.risk_score}/10 · {securityReview.risk_tier}
-            </span>
-            {securityReview.hecvat_provided === false && (
-              <span style={{ ...styles.statusBadge, background: C.stone }}>No HECVAT</span>
-            )}
-          </div>
-
-          <div style={styles.formLabel}>Report</div>
-          <div style={styles.reportBox}>{securityReview.report_markdown}</div>
-
-          <div style={{ ...styles.formLabel, marginTop: "16px" }}>
-            ServiceNow risk summary comment
-          </div>
-          <div style={styles.reportBox}>{securityReview.servicenow_comment}</div>
-          <button style={{ ...styles.cancelButton, marginTop: "8px" }} onClick={handleCopy} type="button">
-            {copied ? "Copied ✓" : "Copy comment"}
-          </button>
-
-          {Array.isArray(securityReview.sources) && securityReview.sources.length > 0 && (
-            <>
-              <div style={{ ...styles.formLabel, marginTop: "16px" }}>Sources checked</div>
-              {securityReview.sources.map((s) => (
-                <SourceRow key={s.doc_type} source={s} />
-              ))}
-            </>
-          )}
-
-          {Array.isArray(securityReview.s3_archived) && securityReview.s3_archived.length > 0 && (
-            <>
-              <div style={{ ...styles.formLabel, marginTop: "16px" }}>
-                Archived to S3 (DataStored/{"{"}request_id{"}"}/...)
-              </div>
-              <div style={styles.reportBox}>
-                {securityReview.s3_archived.map((key) => (
-                  <div key={key}>{key}</div>
-                ))}
-              </div>
-            </>
-          )}
-
-          <button style={{ ...styles.saveButton, marginTop: "16px" }} onClick={onRegenerate} type="button">
-            Regenerate (same documents)
-          </button>
-
-          <div style={{ marginTop: "20px", paddingTop: "16px", borderTop: `1px solid ${C.line}` }}>
-            <AttachDocumentsForm
-              attachedDocuments={attachedDocuments}
-              onSaveAndRegenerate={onSaveAndRegenerate}
-              saving={generating}
-            />
-          </div>
-        </>
-      )}
-
-      {/* Also offer to attach documents before the first report ever runs. */}
-      {!generating && (!status || status === "failed") && (
-        <div style={{ marginTop: "16px", paddingTop: "16px", borderTop: `1px solid ${C.line}` }}>
-          <AttachDocumentsForm
-            attachedDocuments={attachedDocuments}
-            onSaveAndRegenerate={onSaveAndRegenerate}
-            saving={generating}
-          />
-        </div>
-      )}
-    </Section>
   );
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function RequestDetail({ request, onClose, onSaved, onRefreshed }) {
+export default function RequestDetail({ request, onClose, onSaved }) {
   const [record, setRecord] = useState(request);
-  const [generatingReport, setGeneratingReport] = useState(false);
-  const pollRef = useRef(null);
 
   // Reset local state when a different request is opened.
   useEffect(() => {
     setRecord(request);
   }, [request.request_id]);
-
-  // Poll while a report is generating in the background (auto-triggered
-  // right after chatbot submission), so the panel updates itself without
-  // the admin needing to close/reopen or hit refresh.
-  useEffect(() => {
-    if (record.security_review?.status !== "pending") return undefined;
-
-    pollRef.current = setInterval(async () => {
-      try {
-        const updated = await getRequest(record.request_id);
-        setRecord(updated);
-        if (updated.security_review?.status !== "pending") {
-          onRefreshed?.(updated);
-        }
-      } catch {
-        // transient fetch error — just try again on the next tick
-      }
-    }, 4000);
-
-    return () => clearInterval(pollRef.current);
-  }, [record.request_id, record.security_review?.status]);
-
-  async function handleRegenerateReport() {
-    setGeneratingReport(true);
-    try {
-      const updated = await regenerateSecurityReport(record.request_id);
-      setRecord(updated);
-      onRefreshed?.(updated);
-    } catch (err) {
-      setRecord((r) => ({
-        ...r,
-        security_review: { status: "failed", error: err.message || "Request failed" },
-      }));
-    } finally {
-      setGeneratingReport(false);
-    }
-  }
-
-  async function handleSaveDocumentsAndRegenerate(attachedDocuments) {
-    setGeneratingReport(true);
-    try {
-      const savedRecord = await patchAdmin(record.request_id, { attached_documents: attachedDocuments });
-      setRecord(savedRecord);
-      const updated = await regenerateSecurityReport(record.request_id);
-      setRecord(updated);
-      onRefreshed?.(updated);
-    } catch (err) {
-      setRecord((r) => ({
-        ...r,
-        security_review: { status: "failed", error: err.message || "Request failed" },
-      }));
-    } finally {
-      setGeneratingReport(false);
-    }
-  }
 
   const requestor = record.requestor || {};
   const it_review = record.it_review || {};
@@ -482,21 +195,40 @@ export default function RequestDetail({ request, onClose, onSaved, onRefreshed }
   const [status, setStatus] = useState(record.status || "Submitted");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const justificationRef = useRef(null);
+  const [scrolledForError, setScrolledForError] = useState(false);
 
   const hasOverride =
     overrides.ati_flag !== null ||
     overrides.security_flag !== null ||
     overrides.integration_flag !== null ||
     overrides.ai_flag !== null;
+  const overrideCount = Object.values(overrides).filter((v) => v !== null).length;
 
-  // Cycle override for a flag: null → true → false → null
-  function handleToggle(key) {
-    setOverrides((prev) => {
-      const cur = prev[key];
-      const next = cur === null ? true : cur === true ? false : null;
-      return { ...prev, [key]: next };
-    });
+  // Direct set — clicking a segment sets that value immediately, no cycling.
+  function handleSetOverride(key, value) {
+    setOverrides((prev) => ({ ...prev, [key]: value }));
   }
+
+  // Bring the justification box into view once per failed save attempt, but
+  // only if it isn't already visible — the per-field red border + caption is
+  // the primary "which field" signal, this is just a "where is it" assist.
+  useEffect(() => {
+    if (!error) {
+      setScrolledForError(false);
+      return;
+    }
+    if (scrolledForError) return;
+    const el = justificationRef.current;
+    if (el) {
+      const rect = el.getBoundingClientRect();
+      const inView = rect.top >= 0 && rect.bottom <= window.innerHeight;
+      if (!inView && typeof el.scrollIntoView === "function") {
+        el.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    }
+    setScrolledForError(true);
+  }, [error, scrolledForError]);
 
   // Mark a review Completed / Remaining. The stored value survives a flag
   // being overridden off and back on, so no progress is silently lost.
@@ -643,7 +375,7 @@ export default function RequestDetail({ request, onClose, onSaved, onRefreshed }
 
           {/* ── Computed Flags ── */}
           <Section title="Computed Flags">
-            <div style={{ marginBottom: "10px" }}>
+            <div style={styles.flagsSectionHeader}>
               <span style={styles.riskLine}>
                 Risk level:{" "}
                 <span style={{ fontWeight: 700, color: riskColor(flags.risk_level) }}>
@@ -657,7 +389,7 @@ export default function RequestDetail({ request, onClose, onSaved, onRefreshed }
               computedValue={flags.ati_flag === true}
               computedReason={flags.ati_flag_reason || "Not computed yet"}
               overrideValue={overrides.ati_flag}
-              onToggle={handleToggle}
+              onSetOverride={handleSetOverride}
               completed={completions.ati_flag}
               onToggleCompleted={handleToggleCompleted}
             />
@@ -667,7 +399,7 @@ export default function RequestDetail({ request, onClose, onSaved, onRefreshed }
               computedValue={flags.security_flag === true}
               computedReason={flags.security_flag_reason || "Not computed yet"}
               overrideValue={overrides.security_flag}
-              onToggle={handleToggle}
+              onSetOverride={handleSetOverride}
               completed={completions.security_flag}
               onToggleCompleted={handleToggleCompleted}
             />
@@ -677,7 +409,7 @@ export default function RequestDetail({ request, onClose, onSaved, onRefreshed }
               computedValue={flags.integration_flag === true}
               computedReason={flags.integration_flag_reason || "Not computed yet"}
               overrideValue={overrides.integration_flag}
-              onToggle={handleToggle}
+              onSetOverride={handleSetOverride}
               completed={completions.integration_flag}
               onToggleCompleted={handleToggleCompleted}
             />
@@ -687,53 +419,61 @@ export default function RequestDetail({ request, onClose, onSaved, onRefreshed }
               computedValue={flags.ai_flag === true}
               computedReason={flags.ai_flag_reason || "Not computed yet"}
               overrideValue={overrides.ai_flag}
-              onToggle={handleToggle}
+              onSetOverride={handleSetOverride}
               reviewable={false}
             />
+
+            {/* Mounts the instant any flag is overridden, unmounts the instant
+                none are — no manual show/hide, its presence tracks relevance.
+                Locally-typed text survives being hidden (state isn't cleared),
+                so toggling a flag off and back on doesn't lose what was typed. */}
+            {hasOverride && (
+              <div style={styles.overrideEditPanel} ref={justificationRef}>
+                <div style={styles.overrideNote}>
+                  Overriding {overrideCount} flag{overrideCount === 1 ? "" : "s"} — reason and
+                  reviewer are required before saving.
+                </div>
+
+                <label style={styles.formLabel}>
+                  Override reason{hasOverride && <span style={{ color: C.red }}> *</span>}
+                </label>
+                <textarea
+                  style={{
+                    ...styles.textarea,
+                    ...(error && overrideReason.trim() === "" ? styles.inputInvalid : null),
+                  }}
+                  rows={3}
+                  placeholder="Explain why you are overriding one or more computed flags…"
+                  value={overrideReason}
+                  onChange={(e) => setOverrideReason(e.target.value)}
+                  aria-label="Override reason"
+                />
+                {error && overrideReason.trim() === "" && (
+                  <div style={styles.fieldError}>Required</div>
+                )}
+
+                <label style={styles.formLabel}>
+                  Reviewer name / ID{hasOverride && <span style={{ color: C.red }}> *</span>}
+                </label>
+                <input
+                  style={{
+                    ...styles.input,
+                    ...(error && overriddenBy.trim() === "" ? styles.inputInvalid : null),
+                  }}
+                  placeholder="e.g. jdoe or John Doe"
+                  value={overriddenBy}
+                  onChange={(e) => setOverriddenBy(e.target.value)}
+                  aria-label="Reviewer name or ID"
+                />
+                {error && overriddenBy.trim() === "" && (
+                  <div style={styles.fieldError}>Required</div>
+                )}
+              </div>
+            )}
           </Section>
 
-          {/* ── Security Review (Automated) — only when flagged ── */}
-          {flags.security_flag === true && (
-            <SecurityReviewPanel
-              securityReview={record.security_review}
-              attachedDocuments={admin.attached_documents}
-              generating={generatingReport}
-              onRegenerate={handleRegenerateReport}
-              onSaveAndRegenerate={handleSaveDocumentsAndRegenerate}
-            />
-          )}
-
-          {/* ── Override form ── */}
-          <Section title="Override & Admin Notes">
-            <div style={styles.overrideNote}>
-              Use the toggle buttons above to override computed flags. Overrides require a reason
-              and reviewer identification. The computed flag is always shown alongside the override
-              so nothing is silently overwritten.
-            </div>
-
-            <label style={styles.formLabel}>
-              Override reason{hasOverride && <span style={{ color: C.red }}> *</span>}
-            </label>
-            <textarea
-              style={styles.textarea}
-              rows={3}
-              placeholder="Explain why you are overriding one or more computed flags…"
-              value={overrideReason}
-              onChange={(e) => setOverrideReason(e.target.value)}
-              aria-label="Override reason"
-            />
-
-            <label style={styles.formLabel}>
-              Reviewer name / ID{hasOverride && <span style={{ color: C.red }}> *</span>}
-            </label>
-            <input
-              style={styles.input}
-              placeholder="e.g. jdoe or John Doe"
-              value={overriddenBy}
-              onChange={(e) => setOverriddenBy(e.target.value)}
-              aria-label="Reviewer name or ID"
-            />
-
+          {/* ── Admin notes + final save ── */}
+          <Section title="Admin Notes">
             <label style={styles.formLabel}>Admin notes</label>
             <textarea
               style={styles.textarea}
@@ -873,6 +613,19 @@ const styles = {
     fontSize: "12px",
     color: C.stone,
   },
+  flagsSectionHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "10px",
+    flexWrap: "wrap",
+    marginBottom: "10px",
+  },
+  overrideEditPanel: {
+    marginTop: "14px",
+    paddingTop: "14px",
+    borderTop: `1px dashed ${C.line}`,
+  },
   flagRow: {
     display: "flex",
     justifyContent: "space-between",
@@ -899,50 +652,45 @@ const styles = {
   flagRowRight: {
     display: "flex",
     alignItems: "center",
-    gap: "8px",
+    gap: "10px",
     flexWrap: "wrap",
   },
-  flagCell: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: "3px",
+  // The segmented control IS the state display — no separate read-only cells.
+  segmented: {
+    display: "inline-flex",
+    border: `1.5px solid ${C.line}`,
+    borderRadius: "6px",
+    overflow: "hidden",
   },
-  flagCellLabel: {
-    fontFamily: C.mono,
-    fontSize: "9.5px",
-    color: C.stoneLight,
-    textTransform: "uppercase",
-    letterSpacing: "0.04em",
-  },
-  flagPill: {
-    display: "inline-block",
-    padding: "2px 8px",
-    borderRadius: "3px",
-    fontFamily: C.mono,
-    fontSize: "10.5px",
-    fontWeight: 700,
-    letterSpacing: "0.02em",
-    color: C.white,
-  },
-  completeButton: {
-    padding: "4px 10px",
-    borderRadius: "5px",
-    fontSize: "10.5px",
-    fontWeight: 700,
-    letterSpacing: "0.02em",
-    fontFamily: C.mono,
-    whiteSpace: "nowrap",
-  },
-  toggleButton: {
-    padding: "6px 12px",
-    borderRadius: "5px",
+  segment: {
+    padding: "6px 11px",
     fontSize: "11px",
-    fontWeight: 600,
+    fontFamily: C.mono,
     letterSpacing: "0.02em",
+    border: "none",
+    borderRight: `1px solid ${C.line}`,
     cursor: "pointer",
+    whiteSpace: "nowrap",
+  },
+  reviewedChip: {
+    padding: "6px 11px",
+    borderRadius: "5px",
+    border: `1.5px solid ${C.line}`,
+    fontSize: "10.5px",
+    fontWeight: 700,
+    letterSpacing: "0.02em",
     fontFamily: C.mono,
     whiteSpace: "nowrap",
+  },
+  inputInvalid: {
+    borderColor: C.red,
+  },
+  fieldError: {
+    marginTop: "-4px",
+    marginBottom: "8px",
+    fontSize: "11px",
+    fontFamily: C.mono,
+    color: C.red,
   },
   overrideNote: {
     fontSize: "12.5px",
@@ -1015,19 +763,6 @@ const styles = {
     color: C.ink,
     boxSizing: "border-box",
     outline: "none",
-  },
-  reportBox: {
-    whiteSpace: "pre-wrap",
-    background: C.paper,
-    border: `1px solid ${C.line}`,
-    borderRadius: "6px",
-    padding: "12px 14px",
-    fontSize: "12.5px",
-    fontFamily: C.mono,
-    lineHeight: 1.6,
-    color: C.ink,
-    maxHeight: "340px",
-    overflowY: "auto",
   },
   errorMsg: {
     marginTop: "10px",

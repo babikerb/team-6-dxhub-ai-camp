@@ -21,6 +21,7 @@ const C = {
   white: "#ffffff",
   sans: "'IBM Plex Sans', sans-serif",
   mono: "'IBM Plex Mono', monospace",
+  serif: "'Source Serif 4', serif",
 };
 
 // Markdown isn't rendered in this panel, and the two generators disagree about
@@ -311,19 +312,22 @@ export default function ReviewDashboard() {
 
   return (
     <div style={styles.page}>
+      {/* ── Masthead — matches AdminDashboard's (SDSU badge, serif title, sticky dark bar) ── */}
       <div style={styles.header}>
-        <div style={styles.headerLeft}>
-          <button style={styles.backBtn} onClick={() => navigate("/admin")}>
-            ← Dashboard
-          </button>
-          <div>
-            <div style={styles.title}>{cfg.title}</div>
-            <div style={styles.subtitle}>
-              {loading ? "loading…" : `${requestor.software_name || "—"} · ${requestor.department || "—"}`}
-            </div>
+        <div style={styles.headerBadge}>SDSU</div>
+        <div>
+          <div style={styles.headerTitle}>{cfg.title}</div>
+          <div style={styles.headerSubtitle}>
+            {loading ? "loading…" : `${requestor.software_name || "—"} · ${requestor.department || "—"}`}
           </div>
         </div>
         <div style={styles.headerRight}>{cfg.subtitle}</div>
+      </div>
+
+      <div style={styles.backRow}>
+        <button style={styles.backBtn} onClick={() => navigate("/admin")}>
+          ← Dashboard
+        </button>
       </div>
 
       {error && <div style={styles.error}>{error}</div>}
@@ -517,36 +521,71 @@ export default function ReviewDashboard() {
 
 const styles = {
   page: { minHeight: "100vh", fontFamily: C.sans, color: C.ink, backgroundColor: C.paper },
+  // Masthead — matches AdminDashboard.jsx's header exactly (SDSU badge, serif
+  // title, mono subtitle, sticky dark bar) so every admin-facing screen reads
+  // as one system rather than each dashboard inventing its own look.
   header: {
     display: "flex",
     alignItems: "center",
-    justifyContent: "space-between",
-    gap: "16px",
+    gap: "14px",
     flexWrap: "wrap",
     backgroundColor: C.ink,
     color: C.white,
-    paddingTop: "16px",
-    paddingRight: "24px",
-    paddingBottom: "16px",
-    paddingLeft: "24px",
+    padding: "18px 28px",
+    position: "sticky",
+    top: 0,
+    zIndex: 1,
   },
-  headerLeft: { display: "flex", alignItems: "center", gap: "16px" },
-  headerRight: { fontFamily: C.mono, fontSize: "11.5px", color: C.stoneLight },
+  headerBadge: {
+    background: C.red,
+    color: C.white,
+    fontFamily: C.mono,
+    fontWeight: 700,
+    fontSize: "12px",
+    letterSpacing: "0.06em",
+    padding: "7px 11px",
+    borderRadius: "6px",
+    flexShrink: 0,
+  },
+  headerTitle: {
+    fontFamily: C.serif,
+    fontWeight: 600,
+    fontSize: "19px",
+    lineHeight: 1.2,
+    color: C.white,
+  },
+  headerSubtitle: {
+    marginTop: "3px",
+    fontFamily: C.mono,
+    fontSize: "11.5px",
+    color: C.stoneLight,
+  },
+  headerRight: {
+    marginLeft: "auto",
+    fontFamily: C.mono,
+    fontSize: "11.5px",
+    color: C.stoneLight,
+    whiteSpace: "nowrap",
+  },
+  // Back button now lives in the body, just below the masthead, instead of
+  // competing with the title for space in the header row.
+  backRow: {
+    padding: "14px 24px 0",
+  },
   backBtn: {
     fontFamily: C.mono,
     fontSize: "11.5px",
     fontWeight: 700,
-    color: C.white,
-    backgroundColor: "transparent",
-    border: `1px solid ${C.stone}`,
+    color: C.ink,
+    backgroundColor: C.white,
+    border: `1px solid ${C.line}`,
+    borderRadius: "6px",
     paddingTop: "7px",
     paddingRight: "12px",
     paddingBottom: "7px",
     paddingLeft: "12px",
     cursor: "pointer",
   },
-  title: { fontSize: "20px", fontWeight: 700, lineHeight: 1.2 },
-  subtitle: { fontFamily: C.mono, fontSize: "11.5px", color: C.stoneLight, marginTop: "2px" },
   columns: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",

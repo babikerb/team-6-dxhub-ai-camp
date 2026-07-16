@@ -4,6 +4,7 @@ import { listRequests } from "../../api.js";
 import RequestDetail from "./RequestDetail.jsx";
 import { STATUS_ORDER, STATUS_LABELS, statusLabel } from "./statusConfig.js";
 import { effectiveFlags } from "./flagsUtil.js";
+import { useIsMobile } from "../../useIsMobile.js";
 
 // ── Design tokens (matches RequesterChat.jsx / IntakeForm.jsx palette + type system) ──
 const C = {
@@ -22,11 +23,13 @@ const C = {
 };
 
 // The three review dashboards reachable from each row. Order matches the
-// flag columns so the eye tracks across the row consistently.
+// flag columns so the eye tracks across the row consistently. `flagKey` is
+// the effectiveFlags() key that gates whether this button is shown for a
+// given request — a review link only makes sense once its flag is active.
 const REVIEW_DASHBOARDS = [
-  { type: "ati", label: "ATI" },
-  { type: "itso", label: "Security" },
-  { type: "integration", label: "Data Integration" },
+  { type: "ati", label: "ATI", flagKey: "ati" },
+  { type: "itso", label: "Security", flagKey: "security" },
+  { type: "integration", label: "Data Integration", flagKey: "integration" },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -220,6 +223,7 @@ function emptyRequestor(requestor) {
 // ── Main component ────────────────────────────────────────────────────────────
 export default function AdminDashboard() {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -321,7 +325,7 @@ export default function AdminDashboard() {
   return (
     <div style={styles.page}>
       {/* ── Masthead ── */}
-      <div style={styles.header}>
+      <div style={{ ...styles.header, ...(isMobile ? styles.headerMobile : null) }}>
         <div style={styles.headerBadge}>SDSU</div>
         <div>
           <div style={styles.headerTitle}>Admin Dashboard</div>
@@ -338,7 +342,7 @@ export default function AdminDashboard() {
         </button>
       </div>
 
-      <div style={styles.body}>
+      <div style={{ ...styles.body, ...(isMobile ? styles.bodyMobile : null) }}>
         <div style={styles.filterBar}>
           <input
             style={styles.searchInput}
@@ -435,6 +439,93 @@ export default function AdminDashboard() {
           <Legend />
         </div>
 
+        {isMobile ? (
+          <div style={styles.cardList}>
+            {loading ? (
+              <div style={styles.emptyCell}>Loading…</div>
+            ) : filtered.length === 0 ? (
+              <div style={styles.emptyCell}>
+                {error
+                  ? "Unable to load requests."
+                  : requests.length === 0
+                    ? "No requests yet. Submit one from the intake form."
+                    : "No requests match the current filters."}
+              </div>
+            ) : (
+              sorted.map((r) => {
+                const requestor = emptyRequestor(r.requestor);
+                const flags = emptyFlags(r.flags);
+                const effective = effectiveFlags(flags, r.admin);
+                const active = selectedId === r.request_id;
+                const reviewsAvailable = REVIEW_DASHBOARDS.filter(
+                  (d) => effective[d.flagKey].value === true
+                );
+                return (
+                  <div
+                    key={r.request_id}
+                    style={{
+                      ...styles.card,
+                      borderLeftColor: active ? C.red : "transparent",
+                      background: active ? "rgba(200, 16, 46, 0.05)" : C.white,
+                    }}
+                    onClick={() => setSelectedId(r.request_id)}
+                  >
+                    <div style={styles.cardTop}>
+                      <div style={{ fontWeight: 600 }}>{requestor.software_name || "—"}</div>
+                      <Badge label={statusLabel(r.status)} color="var(--stone)" />
+                    </div>
+                    <div style={styles.tdSub}>{r.request_id}</div>
+
+                    <div style={styles.cardRow}>
+                      <span style={styles.cardLabel}>Requestor</span>
+                      <span>
+                        {requestor.requested_for_name || "—"}
+                        {requestor.requested_for_email ? ` · ${requestor.requested_for_email}` : ""}
+                      </span>
+                    </div>
+                    <div style={styles.cardRow}>
+                      <span style={styles.cardLabel}>Department</span>
+                      <span>{requestor.department || "—"}</span>
+                    </div>
+                    <div style={styles.cardRow}>
+                      <span style={styles.cardLabel}>Risk</span>
+                      {flags.risk_level ? (
+                        <Badge label={flags.risk_level} color={riskColor(flags.risk_level)} />
+                      ) : (
+                        <span style={{ color: C.stone, fontSize: "12px" }}>Pending</span>
+                      )}
+                    </div>
+
+                    <div style={{ ...styles.flagsRow, marginTop: "8px" }}>
+                      <FlagPill value={effective.ati.value} overridden={effective.ati.overridden} completed={effective.ati.completed} label="ATI" />
+                      <FlagPill value={effective.security.value} overridden={effective.security.overridden} completed={effective.security.completed} label="ITSO" />
+                      <FlagPill value={effective.integration.value} overridden={effective.integration.overridden} completed={effective.integration.completed} label="INT" />
+                      <FlagPill value={effective.ai.value} overridden={effective.ai.overridden} completed={effective.ai.completed} label="AI" />
+                    </div>
+
+                    {reviewsAvailable.length > 0 && (
+                      <div
+                        style={styles.cardReviewBtns}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {reviewsAvailable.map((d) => (
+                          <button
+                            key={d.type}
+                            style={styles.reviewBtn}
+                            title={`Open the ${d.label} for this request`}
+                            onClick={() => navigate(`/admin/${r.request_id}/review/${d.type}`)}
+                          >
+                            {d.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        ) : (
         <div style={styles.tableWrapper}>
           <table style={styles.table}>
             {/* table-layout is fixed, so every column needs a <col> here — a
@@ -533,10 +624,16 @@ export default function AdminDashboard() {
                         )}
                       </td>
                       {/* stopPropagation: the row itself opens the detail panel,
-                          and these buttons navigate somewhere else entirely. */}
+                          and these buttons navigate somewhere else entirely.
+                          Only requests actually flagged for a given review get
+                          that review's button — ungated buttons for a request
+                          with nothing to review just clutter the row. Because
+                          this reads `effective` (computed + admin overrides),
+                          ticking an override on immediately makes the button
+                          appear with no extra wiring needed. */}
                       <td style={styles.td} onClick={(e) => e.stopPropagation()}>
                         <div style={styles.reviewBtns}>
-                          {REVIEW_DASHBOARDS.map((d) => (
+                          {REVIEW_DASHBOARDS.filter((d) => effective[d.flagKey].value === true).map((d) => (
                             <button
                               key={d.type}
                               style={styles.reviewBtn}
@@ -546,6 +643,9 @@ export default function AdminDashboard() {
                               {d.label}
                             </button>
                           ))}
+                          {REVIEW_DASHBOARDS.every((d) => effective[d.flagKey].value !== true) && (
+                            <span style={styles.noReviewsNote}>No reviews required</span>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -555,6 +655,7 @@ export default function AdminDashboard() {
             </tbody>
           </table>
         </div>
+        )}
       </div>
 
       {selected && (
@@ -562,7 +663,6 @@ export default function AdminDashboard() {
           request={selected}
           onClose={() => setSelectedId(null)}
           onSaved={handleSaved}
-          onRefreshed={handleRefreshed}
         />
       )}
     </div>
@@ -584,6 +684,10 @@ const styles = {
     position: "sticky",
     top: 0,
     zIndex: 1,
+  },
+  headerMobile: {
+    padding: "14px 16px",
+    gap: "10px",
   },
   headerBadge: {
     background: C.red,
@@ -625,6 +729,9 @@ const styles = {
     padding: "28px",
     maxWidth: "1400px",
     margin: "0 auto",
+  },
+  bodyMobile: {
+    padding: "14px",
   },
   filterBar: {
     display: "flex",
@@ -751,6 +858,12 @@ const styles = {
     gap: "4px",
     minWidth: "150px",
   },
+  noReviewsNote: {
+    fontFamily: C.mono,
+    fontSize: "11px",
+    fontStyle: "italic",
+    color: C.stone,
+  },
   reviewBtn: {
     fontFamily: C.mono,
     fontSize: "10.5px",
@@ -765,6 +878,54 @@ const styles = {
     cursor: "pointer",
     textAlign: "left",
     whiteSpace: "nowrap",
+  },
+  // ── Mobile card list — replaces the fixed-width table below the breakpoint,
+  // since a table-layout:fixed table with 7 columns has no room to shrink into
+  // a phone width without truncating everything.
+  cardList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
+  },
+  card: {
+    background: C.white,
+    border: `1px solid ${C.line}`,
+    borderLeft: "3px solid transparent",
+    borderRadius: "10px",
+    padding: "14px",
+    boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+    cursor: "pointer",
+  },
+  cardTop: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: "10px",
+    fontSize: "14px",
+  },
+  cardRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "10px",
+    padding: "6px 0",
+    borderTop: `1px solid ${C.paperAlt}`,
+    fontSize: "12.5px",
+  },
+  cardLabel: {
+    fontFamily: C.mono,
+    fontSize: "10.5px",
+    textTransform: "uppercase",
+    letterSpacing: "0.03em",
+    color: C.stone,
+    flexShrink: 0,
+  },
+  cardReviewBtns: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "6px",
+    marginTop: "10px",
+    paddingTop: "10px",
+    borderTop: `1px solid ${C.paperAlt}`,
   },
   th: {
     padding: "12px 16px",

@@ -242,20 +242,22 @@ describe('RequestDetail — flag display', () => {
   const lowRiskRequest = MOCK_REQUESTS.find((r) => r.request_id === 'aaa-001');
   const noop = vi.fn();
 
-  it('shows Flagged pills for all three flags on a high-risk request', () => {
+  it('shows the live computed value on the Auto segment for a high-risk (all-flagged) request', () => {
     render(
       <RequestDetail request={highRiskRequest} onClose={noop} onSaved={noop} />
     );
-    const flaggedPills = screen.getAllByText('Flagged');
-    expect(flaggedPills.length).toBeGreaterThanOrEqual(6);
+    expect(screen.getByTestId('override-auto-ati-review').textContent).toBe('Auto (Flagged)');
+    expect(screen.getByTestId('override-auto-itso-review').textContent).toBe('Auto (Flagged)');
+    expect(screen.getByTestId('override-auto-integration-review').textContent).toBe('Auto (Flagged)');
   });
 
-  it('shows Clear pills for all three flags on a low-risk request', () => {
+  it('shows the live computed value on the Auto segment for a low-risk (all-clear) request', () => {
     render(
       <RequestDetail request={lowRiskRequest} onClose={noop} onSaved={noop} />
     );
-    const clearPills = screen.getAllByText('Clear');
-    expect(clearPills.length).toBeGreaterThanOrEqual(6);
+    expect(screen.getByTestId('override-auto-ati-review').textContent).toBe('Auto (Clear)');
+    expect(screen.getByTestId('override-auto-itso-review').textContent).toBe('Auto (Clear)');
+    expect(screen.getByTestId('override-auto-integration-review').textContent).toBe('Auto (Clear)');
   });
 
   it('renders all 18 requestor fields', () => {
@@ -276,14 +278,14 @@ describe('RequestDetail — flag display', () => {
     expect(screen.getByText('High')).toBeInTheDocument();
   });
 
-  it('displays Computed and Override columns side by side', () => {
+  it('has no separate mode to enter — the segmented controls are live immediately', () => {
     render(
       <RequestDetail request={highRiskRequest} onClose={noop} onSaved={noop} />
     );
-    const computedLabels = screen.getAllByText('Computed');
-    expect(computedLabels.length).toBe(4);
-    const overrideLabels = screen.getAllByText('Override');
-    expect(overrideLabels.length).toBe(8);
+    // No "Override flags" entry button and no gating exists anymore.
+    expect(screen.queryByText('Override flags')).not.toBeInTheDocument();
+    expect(screen.getByTestId('override-flag-ati-review')).toBeInTheDocument();
+    expect(screen.getByTestId('override-clear-ati-review')).toBeInTheDocument();
   });
 
   it('shows AI / ADS as an overrideable tracking flag', () => {
@@ -292,7 +294,7 @@ describe('RequestDetail — flag display', () => {
     );
     expect(screen.getByText('AI / ADS')).toBeInTheDocument();
     expect(screen.getByText('Tracking only')).toBeInTheDocument();
-    expect(screen.getByTestId('toggle-ai-ads')).toBeInTheDocument();
+    expect(screen.getByTestId('override-flag-ai-ads')).toBeInTheDocument();
   });
 });
 
@@ -305,9 +307,9 @@ describe('RequestDetail — review completion', () => {
 
   it('shows the saved completion state per review', () => {
     render(<RequestDetail request={highRiskRequest} onClose={noop} onSaved={noop} />);
-    expect(screen.getByTestId('complete-itso-review').textContent).toMatch(/Completed/);
-    expect(screen.getByTestId('complete-ati-review').textContent).toBe('Remaining');
-    expect(screen.getByTestId('complete-integration-review').textContent).toBe('Remaining');
+    expect(screen.getByTestId('complete-itso-review').textContent).toMatch(/Reviewed/);
+    expect(screen.getByTestId('complete-ati-review').textContent).toBe('Review pending');
+    expect(screen.getByTestId('complete-integration-review').textContent).toBe('Review pending');
   });
 
   it('disables the completion toggle when the review does not apply', () => {
@@ -337,22 +339,47 @@ describe('RequestDetail — review completion', () => {
   });
 });
 
-// ── RequestDetail — override validation ──────────────────────────────────────
+// ── RequestDetail — override interaction & validation ─────────────────────────
+// The segmented control IS the state: clicking "Flag"/"Clear" sets that value
+// directly (no cycling), and clicking "Auto" clears the override. The
+// reason/reviewer justification box mounts and unmounts automatically based on
+// whether any flag is currently overridden.
 
-describe('RequestDetail — override validation', () => {
+describe('RequestDetail — override interaction & validation', () => {
   const request = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
   const noop = vi.fn();
 
-  it('does not show an error before any interaction', () => {
+  it('does not show the justification box or any error before any interaction', () => {
     render(<RequestDetail request={request} onClose={noop} onSaved={noop} />);
+    expect(screen.queryByLabelText('Override reason')).not.toBeInTheDocument();
     expect(screen.queryByText(/override reason is required/i)).not.toBeInTheDocument();
+  });
+
+  it('clicking Flag sets the override directly and reveals the justification box', () => {
+    render(<RequestDetail request={request} onClose={noop} onSaved={noop} />);
+
+    fireEvent.click(screen.getByTestId('override-flag-ati-review'));
+
+    expect(screen.getByLabelText('Override reason')).toBeInTheDocument();
+    expect(screen.getByLabelText('Reviewer name or ID')).toBeInTheDocument();
+    expect(screen.getByText(/Overriding 1 flag/)).toBeInTheDocument();
+  });
+
+  it('clicking Auto after overriding clears it and hides the justification box again', () => {
+    render(<RequestDetail request={request} onClose={noop} onSaved={noop} />);
+
+    fireEvent.click(screen.getByTestId('override-flag-ati-review'));
+    expect(screen.getByLabelText('Override reason')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('override-auto-ati-review'));
+    expect(screen.queryByLabelText('Override reason')).not.toBeInTheDocument();
   });
 
   it('blocks save and shows error when override is set but reason is empty', async () => {
     const onSaved = vi.fn();
     render(<RequestDetail request={request} onClose={noop} onSaved={onSaved} />);
 
-    fireEvent.click(screen.getByTestId('toggle-ati-review'));
+    fireEvent.click(screen.getByTestId('override-flag-ati-review'));
     fireEvent.click(screen.getByText('Save changes'));
 
     await waitFor(() =>
@@ -362,11 +389,20 @@ describe('RequestDetail — override validation', () => {
     expect(patchAdmin).not.toHaveBeenCalled();
   });
 
+  it('marks the empty reason and reviewer fields with a "Required" caption after a failed save', async () => {
+    render(<RequestDetail request={request} onClose={noop} onSaved={noop} />);
+
+    fireEvent.click(screen.getByTestId('override-flag-ati-review'));
+    fireEvent.click(screen.getByText('Save changes'));
+
+    await waitFor(() => expect(screen.getAllByText('Required')).toHaveLength(2));
+  });
+
   it('blocks save and shows error when override is set, reason filled, but reviewer ID is missing', async () => {
     const onSaved = vi.fn();
     render(<RequestDetail request={request} onClose={noop} onSaved={onSaved} />);
 
-    fireEvent.click(screen.getByTestId('toggle-ati-review'));
+    fireEvent.click(screen.getByTestId('override-flag-ati-review'));
     fireEvent.change(screen.getByLabelText('Override reason'), {
       target: { value: 'Manually confirmed ATI is not needed for this use case.' },
     });
@@ -376,6 +412,8 @@ describe('RequestDetail — override validation', () => {
       expect(screen.getByText(/Please enter the name or ID of the reviewer/i)).toBeInTheDocument()
     );
     expect(onSaved).not.toHaveBeenCalled();
+    // Only the reviewer field is still missing now.
+    expect(screen.getAllByText('Required')).toHaveLength(1);
   });
 
   it('calls onSaved when no overrides are set (no validation required)', async () => {
@@ -392,7 +430,7 @@ describe('RequestDetail — override validation', () => {
     const onSaved = vi.fn();
     render(<RequestDetail request={request} onClose={noop} onSaved={onSaved} />);
 
-    fireEvent.click(screen.getByTestId('toggle-ati-review'));
+    fireEvent.click(screen.getByTestId('override-flag-ati-review'));
     fireEvent.change(screen.getByLabelText('Override reason'), {
       target: { value: 'Business justification provided by department head.' },
     });
@@ -416,38 +454,13 @@ describe('RequestDetail — override validation', () => {
     );
   });
 
-  it('cycles toggle through Override → Flagged → Clear → None', () => {
+  it('sets the override directly to Clear without cycling through Flag first', () => {
     render(<RequestDetail request={request} onClose={noop} onSaved={noop} />);
 
-    const btn = screen.getByTestId('toggle-ati-review');
-    expect(btn.textContent).toBe('Override');
-    fireEvent.click(btn);
-    expect(btn.textContent).toMatch(/Clear/);
-    fireEvent.click(btn);
-    expect(btn.textContent).toMatch(/Flag/);
-    fireEvent.click(btn);
-    expect(btn.textContent).toBe('Override');
-  });
-
-  it('also uses testid for the calls onSaved after filling in reason test', async () => {
-    const onSaved = vi.fn();
-    render(<RequestDetail request={request} onClose={noop} onSaved={onSaved} />);
-
-    fireEvent.click(screen.getByTestId('toggle-ati-review'));
-    fireEvent.change(screen.getByLabelText('Override reason'), {
-      target: { value: 'Business justification provided by department head.' },
-    });
-    fireEvent.change(screen.getByLabelText('Reviewer name or ID'), {
-      target: { value: 'jdoe' },
-    });
-    fireEvent.click(screen.getByText('Save changes'));
-
-    await waitFor(() => expect(onSaved).toHaveBeenCalled());
-    const savedArg = onSaved.mock.calls[0][0];
-    expect(savedArg.admin.overridden_by).toBe('jdoe');
-    expect(savedArg.admin.override_reason).toBe(
-      'Business justification provided by department head.'
-    );
+    // ATI is computed Flagged on this record; clicking Clear directly overrides
+    // it to false in one click, no intermediate state.
+    fireEvent.click(screen.getByTestId('override-clear-ati-review'));
+    expect(screen.getByText(/Overriding 1 flag/)).toBeInTheDocument();
   });
 });
 
@@ -469,12 +482,32 @@ describe('AdminDashboard — review dashboard buttons', () => {
     expect(screen.queryByText('Review Docs')).not.toBeInTheDocument();
   });
 
-  it('renders all three dashboard buttons on every row', async () => {
+  it('renders a dashboard button for every flag triggered on the row', async () => {
     await renderDashboard();
+    // CampusHealth360 (bbb-002) has ati_flag/security_flag/integration_flag all true.
     const row = screen.getByText('CampusHealth360').closest('tr');
     expect(within(row).getByRole('button', { name: 'ATI' })).toBeInTheDocument();
     expect(within(row).getByRole('button', { name: 'Security' })).toBeInTheDocument();
     expect(within(row).getByRole('button', { name: 'Data Integration' })).toBeInTheDocument();
+  });
+
+  it('omits dashboard buttons for reviews that are not flagged', async () => {
+    await renderDashboard();
+    // ResearchTrack Pro (aaa-001) has all three flags false — no review is needed yet.
+    const row = screen.getByText('ResearchTrack Pro').closest('tr');
+    expect(within(row).queryByRole('button', { name: 'ATI' })).not.toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: 'Security' })).not.toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: 'Data Integration' })).not.toBeInTheDocument();
+    expect(within(row).getByText('No reviews required')).toBeInTheDocument();
+  });
+
+  it('renders only the buttons for the flags that are actually set', async () => {
+    await renderDashboard();
+    // AutoCAD LT (ccc-003): ati_flag + security_flag true, integration_flag false.
+    const row = screen.getByText('AutoCAD LT').closest('tr');
+    expect(within(row).getByRole('button', { name: 'ATI' })).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Security' })).toBeInTheDocument();
+    expect(within(row).queryByRole('button', { name: 'Data Integration' })).not.toBeInTheDocument();
   });
 
   it('navigates to that request\'s review dashboard, not the detail panel', async () => {
