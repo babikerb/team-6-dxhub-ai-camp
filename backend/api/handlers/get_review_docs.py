@@ -22,21 +22,40 @@ Response shape:
 }
 
 Status semantics:
-- "pending"  — the review_docs entry is absent from DynamoDB (no upload yet).
+- "pending"  — no DynamoDB entry AND no files found in S3 (review not started).
                Message: "Review in progress, gathering documents"
-- "complete" — files list is non-empty; presigned URLs are returned.
+- "complete" — files present; presigned URLs are returned.
                Message: None (frontend shows the file links directly)
 - "no_docs"  — DynamoDB entry exists but files list is empty.
                ATI / ITSO: "No documents found. Contact vendor"
                Integration: "No documents found"
+
+S3 fallback:
+    When a review type's key is absent from DynamoDB, this handler lists
+    S3 directly under DataStored/<request_id>/<ReviewFolder>/.  If files
+    are found there, they are written back to DynamoDB (backfill) so future
+    calls are fast, and the response reflects the real state rather than
+    showing "pending" for documents that already exist.
+
+    This covers files that were uploaded before the S3 event trigger was
+    deployed, or uploaded by any path that bypassed the trigger.
 """
 
+import logging
 import os
 
 import boto3
 from botocore.exceptions import ClientError
 
+from handlers.s3_event_handler import (
+    _ensure_review_docs_exists,
+    _update_review_docs,
+    list_files,
+)
 from handlers.store import error_response, get_request, response
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 _S3_BUCKET = os.environ.get("REVIEW_DOCS_BUCKET", "")
 _PRESIGN_EXPIRY = int(os.environ.get("PRESIGN_EXPIRY_SECONDS", "3600"))  # 1 hour
@@ -50,7 +69,7 @@ _NO_DOCS_MESSAGES = {
 
 _PENDING_MESSAGE = "Review in progress, gathering documents"
 
-# Map DynamoDB key → S3 folder name (for building the object key).
+# Map DynamoDB key → S3 folder name (for building object keys and S3 listing).
 _REVIEW_TYPE_S3_FOLDER = {
     "ati":         "ATI",
     "itso":        "ITSO",
@@ -71,6 +90,20 @@ def _presign(s3_client, bucket: str, key: str, expiry: int) -> str:
     )
 
 
+def _build_file_entries(s3_client, request_id: str, review_key: str, files: list[str], bucket: str) -> list[dict]:
+    """Build the list of {name, url} dicts for a set of filenames."""
+    s3_folder = _REVIEW_TYPE_S3_FOLDER[review_key]
+    entries = []
+    for filename in files:
+        s3_key = f"DataStored/{request_id}/{s3_folder}/{filename}"
+        try:
+            url = _presign(s3_client, bucket, s3_key, _PRESIGN_EXPIRY)
+        except ClientError:
+            url = None
+        entries.append({"name": filename, "url": url})
+    return entries
+
+
 def _build_review_section(
     s3_client,
     request_id: str,
@@ -82,37 +115,62 @@ def _build_review_section(
     Build the response object for one review type.
 
     *stored* is the value of review_docs[review_key] from DynamoDB, or None
-    if that key is absent (meaning no upload has happened yet for that type).
+    if that key is absent.
+
+    When *stored* is None the handler falls back to listing S3 directly.
+    If files exist in S3, it backfills DynamoDB and returns complete status.
+    If no files exist in S3 either, it returns pending.
     """
-    if stored is None:
+    # ── DynamoDB entry present ────────────────────────────────────────────────
+    if stored is not None:
+        files = stored.get("files", [])
+        if not files:
+            return {
+                "status": "no_docs",
+                "message": _NO_DOCS_MESSAGES[review_key],
+                "files": [],
+            }
+        return {
+            "status": "complete",
+            "message": None,
+            "files": _build_file_entries(s3_client, request_id, review_key, files, bucket),
+        }
+
+    # ── DynamoDB entry absent — fall back to S3 listing ───────────────────────
+    s3_folder = _REVIEW_TYPE_S3_FOLDER[review_key]
+    prefix = f"DataStored/{request_id}/{s3_folder}/"
+    try:
+        files = list_files(s3_client, bucket, prefix)
+    except ClientError as exc:
+        logger.warning(
+            "S3 fallback listing failed for %s/%s: %s", request_id, review_key, exc
+        )
+        files = []
+
+    if not files:
+        # Nothing in S3 either — genuinely pending.
         return {
             "status": "pending",
             "message": _PENDING_MESSAGE,
             "files": [],
         }
 
-    files = stored.get("files", [])
-    if not files:
-        return {
-            "status": "no_docs",
-            "message": _NO_DOCS_MESSAGES[review_key],
-            "files": [],
-        }
-
-    s3_folder = _REVIEW_TYPE_S3_FOLDER[review_key]
-    file_entries = []
-    for filename in files:
-        s3_key = f"DataStored/{request_id}/{s3_folder}/{filename}"
-        try:
-            url = _presign(s3_client, bucket, s3_key, _PRESIGN_EXPIRY)
-        except ClientError:
-            url = None
-        file_entries.append({"name": filename, "url": url})
+    # Files exist in S3 but weren't recorded in DynamoDB — backfill.
+    logger.info(
+        "S3 fallback: found %d file(s) for %s/%s — backfilling DynamoDB",
+        len(files), request_id, review_key,
+    )
+    try:
+        _ensure_review_docs_exists(request_id)
+        _update_review_docs(request_id, review_key, files)
+    except ClientError as exc:
+        # Backfill is best-effort; a failure here should not block the response.
+        logger.warning("DynamoDB backfill failed for %s/%s: %s", request_id, review_key, exc)
 
     return {
         "status": "complete",
         "message": None,
-        "files": file_entries,
+        "files": _build_file_entries(s3_client, request_id, review_key, files, bucket),
     }
 
 

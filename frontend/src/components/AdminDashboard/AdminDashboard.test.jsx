@@ -7,9 +7,10 @@ import RequestDetail from './RequestDetail.jsx';
 vi.mock('../../api.js', () => ({
   listRequests: vi.fn(),
   patchAdmin: vi.fn(),
+  getReviewDocs: vi.fn(),
 }));
 
-import { listRequests, patchAdmin } from '../../api.js';
+import { listRequests, patchAdmin, getReviewDocs } from '../../api.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -26,6 +27,12 @@ beforeEach(() => {
       },
       updated_at: new Date().toISOString(),
     };
+  });
+  // Return the review_docs already on each mock record so the live fetch
+  // matches what the table expects.
+  getReviewDocs.mockImplementation(async (requestId) => {
+    const record = MOCK_REQUESTS.find((r) => r.request_id === requestId);
+    return { request_id: requestId, review_docs: record?.review_docs ?? {} };
   });
 });
 

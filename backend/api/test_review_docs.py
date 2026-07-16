@@ -273,3 +273,94 @@ class TestGetReviewDocsCompleteState:
         resp = mod.handler(_event())
         body = json.loads(resp["body"])
         assert body["request_id"] == REQUEST_ID
+
+
+class TestGetReviewDocsS3Fallback:
+    """
+    Cover the fallback path: review_docs key absent from DynamoDB but
+    files already exist in S3 (e.g. uploaded before the event trigger
+    was deployed).
+    """
+
+    def test_files_in_s3_but_absent_from_dynamo_returns_complete(self, full_env):
+        """Primary fallback: S3 has files, DynamoDB has no entry → complete."""
+        table, s3, mod = full_env
+        _put_request(table)  # no review_docs key at all
+        _upload(s3, f"DataStored/{REQUEST_ID}/ATI/vpat.pdf")
+        _upload(s3, f"DataStored/{REQUEST_ID}/ATI/privacy_policy.pdf")
+
+        resp = mod.handler(_event())
+        assert resp["statusCode"] == 200
+        body = json.loads(resp["body"])
+
+        ati = body["review_docs"]["ati"]
+        assert ati["status"] == "complete"
+        assert ati["message"] is None
+        names = {f["name"] for f in ati["files"]}
+        assert names == {"vpat.pdf", "privacy_policy.pdf"}
+        for f in ati["files"]:
+            assert f["url"] and len(f["url"]) > 0
+
+    def test_s3_fallback_backfills_dynamodb(self, full_env):
+        """After a fallback hit, DynamoDB is updated so the next call is served from DB."""
+        table, s3, mod = full_env
+        _put_request(table)
+        _upload(s3, f"DataStored/{REQUEST_ID}/ITSO/soc2.pdf")
+
+        mod.handler(_event())
+
+        # DynamoDB should now have the itso entry.
+        item = table.get_item(Key={"request_id": REQUEST_ID})["Item"]
+        assert "review_docs" in item
+        itso = item["review_docs"]["itso"]
+        assert itso["status"] == "complete"
+        assert "soc2.pdf" in itso["files"]
+
+    def test_no_files_in_s3_and_absent_from_dynamo_returns_pending(self, full_env):
+        """Nothing in S3 either → genuinely pending."""
+        table, _, mod = full_env
+        _put_request(table)  # bucket is empty
+
+        resp = mod.handler(_event())
+        body = json.loads(resp["body"])
+
+        # All three types should be pending.
+        for key in ("ati", "itso", "integration"):
+            assert body["review_docs"][key]["status"] == "pending"
+            assert "Review in progress" in body["review_docs"][key]["message"]
+
+    def test_partial_fallback_only_missing_keys_are_checked_in_s3(self, full_env):
+        """
+        If DynamoDB has an entry for ITSO but not ATI, only ATI should be
+        looked up in S3; ITSO should be served directly from DynamoDB.
+        """
+        table, s3, mod = full_env
+        _put_request(
+            table,
+            review_docs={"itso": {"status": "complete", "files": ["soc2.pdf"]}},
+        )
+        # Put ATI files in S3 — should trigger fallback for ATI only.
+        _upload(s3, f"DataStored/{REQUEST_ID}/ATI/vpat.pdf")
+        _upload(s3, f"DataStored/{REQUEST_ID}/ITSO/soc2.pdf")  # already in DB
+
+        resp = mod.handler(_event())
+        body = json.loads(resp["body"])
+
+        assert body["review_docs"]["ati"]["status"] == "complete"
+        assert body["review_docs"]["itso"]["status"] == "complete"
+        assert body["review_docs"]["integration"]["status"] == "pending"
+
+    def test_s3_fallback_for_all_three_review_types(self, full_env):
+        """All three types absent from DynamoDB but present in S3."""
+        table, s3, mod = full_env
+        _put_request(table)
+        _upload(s3, f"DataStored/{REQUEST_ID}/ATI/vpat.pdf")
+        _upload(s3, f"DataStored/{REQUEST_ID}/ITSO/hecvat.pdf")
+        _upload(s3, f"DataStored/{REQUEST_ID}/Integration/architecture_notes.pdf")
+
+        resp = mod.handler(_event())
+        body = json.loads(resp["body"])
+
+        assert body["review_docs"]["ati"]["status"] == "complete"
+        assert body["review_docs"]["itso"]["status"] == "complete"
+        assert body["review_docs"]["integration"]["status"] == "complete"

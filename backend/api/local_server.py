@@ -13,6 +13,12 @@ Then hit http://localhost:8000 -- see README.md for endpoint list + curl example
 """
 
 import json
+import os
+from pathlib import Path
+
+# Load .env before importing handlers so env vars like REVIEW_DOCS_BUCKET are set.
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent / ".env")
 
 import uvicorn
 from fastapi import FastAPI, Request, Response

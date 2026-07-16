@@ -52,8 +52,11 @@ def _s3_client():
     return boto3.client("s3", region_name=os.environ.get("AWS_REGION", "us-west-2"))
 
 
-def _list_files(s3, bucket: str, prefix: str) -> list[str]:
-    """Return basenames of all objects under *prefix* (no sub-folders)."""
+def list_files(s3, bucket: str, prefix: str) -> list[str]:
+    """Return basenames of all objects under *prefix* (no sub-folders).
+
+    Public so get_review_docs can reuse this without duplicating the logic.
+    """
     paginator = s3.get_paginator("list_objects_v2")
     files = []
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
@@ -65,6 +68,10 @@ def _list_files(s3, bucket: str, prefix: str) -> list[str]:
             # Extract just the filename (last segment)
             files.append(key.split("/")[-1])
     return files
+
+
+# Keep the private alias so nothing inside this module needs changing.
+_list_files = list_files
 
 
 def _update_review_docs(request_id: str, review_key: str, files: list[str]) -> None:

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { listRequests } from "../../api.js";
+import { listRequests, getReviewDocs } from "../../api.js";
 import RequestDetail from "./RequestDetail.jsx";
 import { STATUS_ORDER, STATUS_LABELS, statusColor, statusLabel } from "./statusConfig.js";
 import { effectiveFlags } from "./flagsUtil.js";
@@ -156,6 +156,9 @@ export default function AdminDashboard() {
   const [error, setError] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [hoveredId, setHoveredId] = useState(null);
+  // reviewDocs: { [request_id]: { ati, itso, integration } }
+  // Populated by parallel GET /review-docs calls after the request list loads.
+  const [reviewDocs, setReviewDocs] = useState({});
 
   const [filterStatus, setFilterStatus] = useState("");
   const [filterFlag, setFilterFlag] = useState("");
@@ -167,7 +170,21 @@ export default function AdminDashboard() {
     setError(null);
     try {
       const data = await listRequests();
-      setRequests(Array.isArray(data.items) ? data.items : []);
+      const items = Array.isArray(data.items) ? data.items : [];
+      setRequests(items);
+
+      // Fetch live review-doc status for every request in parallel.
+      // Failures per-request are swallowed so one bad item can't break the table.
+      const results = await Promise.allSettled(
+        items.map((r) => getReviewDocs(r.request_id))
+      );
+      const docsMap = {};
+      results.forEach((result, i) => {
+        if (result.status === "fulfilled") {
+          docsMap[items[i].request_id] = result.value.review_docs;
+        }
+      });
+      setReviewDocs(docsMap);
     } catch (err) {
       setError(err.message || "Could not load requests.");
       setRequests([]);
@@ -217,6 +234,12 @@ export default function AdminDashboard() {
     setRequests((prev) =>
       prev.map((r) => (r.request_id === updatedRequest.request_id ? updatedRequest : r))
     );
+    // Re-fetch live review docs for the updated request so the table stays current.
+    getReviewDocs(updatedRequest.request_id)
+      .then((data) =>
+        setReviewDocs((prev) => ({ ...prev, [updatedRequest.request_id]: data.review_docs }))
+      )
+      .catch(() => {}); // best-effort
     setSelectedId(null);
   }
 
@@ -360,6 +383,10 @@ export default function AdminDashboard() {
                   const flags = emptyFlags(r.flags);
                   const effective = effectiveFlags(flags, r.admin);
                   const active = selectedId === r.request_id || hoveredId === r.request_id;
+                  // Use live review-docs data fetched from the endpoint; fall
+                  // back to whatever is on the DynamoDB record if the fetch
+                  // hasn't completed yet or failed for this request.
+                  const liveReviewDocs = reviewDocs[r.request_id] || r.review_docs || {};
                   return (
                     <tr
                       key={r.request_id}
@@ -403,13 +430,13 @@ export default function AdminDashboard() {
                         )}
                       </td>
                       <td style={styles.td} onClick={(e) => e.stopPropagation()}>
-                        <ReviewDocCell reviewSection={r.review_docs?.ati} />
+                        <ReviewDocCell reviewSection={liveReviewDocs?.ati} />
                       </td>
                       <td style={styles.td} onClick={(e) => e.stopPropagation()}>
-                        <ReviewDocCell reviewSection={r.review_docs?.itso} />
+                        <ReviewDocCell reviewSection={liveReviewDocs?.itso} />
                       </td>
                       <td style={styles.td} onClick={(e) => e.stopPropagation()}>
-                        <ReviewDocCell reviewSection={r.review_docs?.integration} />
+                        <ReviewDocCell reviewSection={liveReviewDocs?.integration} />
                       </td>
                     </tr>
                   );
@@ -482,7 +509,7 @@ const styles = {
   },
   body: {
     padding: "28px",
-    maxWidth: "1140px",
+    maxWidth: "1400px",
     margin: "0 auto",
   },
   filterBar: {
@@ -558,10 +585,15 @@ const styles = {
     border: `1px solid ${C.line}`,
     borderRadius: "10px",
     boxShadow: "0 1px 2px rgba(0,0,0,0.04), 0 12px 32px rgba(0,0,0,0.08)",
-    overflow: "hidden",
+    overflowX: "auto",
+    // Keep the rounded corners visible while still clipping the scrollable area.
+    WebkitOverflowScrolling: "touch",
   },
   table: {
     width: "100%",
+    // Enough room for 9 columns: 3 core + Status + Flags + Risk + 3 doc columns.
+    // The wrapper will scroll horizontally on narrow viewports.
+    minWidth: "1200px",
     borderCollapse: "collapse",
   },
   th: {
