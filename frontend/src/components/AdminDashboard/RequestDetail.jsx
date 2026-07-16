@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { patchAdmin } from "../../api.js";
+import { useEffect, useRef, useState } from "react";
+import { getRequest, patchAdmin, regenerateSecurityReport } from "../../api.js";
 import { STATUS_ORDER, STATUS_LABELS, STATUS_DESCRIPTIONS, statusColor } from "./statusConfig.js";
 
 // ── Design tokens (matches RequesterChat.jsx / IntakeForm.jsx palette + type system) ──
@@ -127,12 +127,292 @@ function FlagRow({ label, computedValue, computedReason, overrideValue, onToggle
   );
 }
 
+// ── Security Review risk badge ────────────────────────────────────────────────
+function riskTierColor(tier) {
+  if (tier === "High") return C.red;
+  if (tier === "Medium") return "#B5650B";
+  return C.stone;
+}
+
+const SOURCE_LABELS = {
+  admin_attached: "attached by reviewer",
+  requester_provided: "provided by requester",
+  auto_search: "found via web search",
+  not_found: "not found",
+};
+
+// ── One row in "Sources checked": link + how it was obtained ──────────────────
+function SourceRow({ source }) {
+  const label = source.doc_type.replace(/_/g, " ");
+  return (
+    <div style={styles.field}>
+      <span style={styles.fieldLabel}>{label}</span>
+      <span style={styles.fieldValue}>
+        {source.fetched ? (
+          <a href={source.url} target="_blank" rel="noreferrer" style={{ color: C.red }}>
+            {source.url}
+          </a>
+        ) : (
+          <span style={{ color: C.stoneLight, fontStyle: "italic" }}>
+            {source.url ? "found but could not be fetched" : "not available"}
+          </span>
+        )}
+        <span style={{ marginLeft: "8px", fontSize: "10.5px", color: C.stoneLight }}>
+          ({SOURCE_LABELS[source.source] || source.source})
+        </span>
+      </span>
+    </div>
+  );
+}
+
+// ── Attach Documents: reviewer can paste a link the requester didn't provide,
+// or that the report's auto-search couldn't find (HECVAT/SOC 2 are never
+// asked of the requester, only auto-searched — this is the only way to add
+// them). Saved links take priority over requester-provided ones next time
+// the report generates. ─────────────────────────────────────────────────────
+const DOC_TYPE_LABELS = {
+  privacy_policy: "Privacy policy",
+  terms_of_service: "Terms of service",
+  vpat: "VPAT / accessibility doc",
+  hecvat: "HECVAT",
+  soc2: "SOC 2 report",
+};
+
+function AttachDocumentsForm({ attachedDocuments, onSaveAndRegenerate, saving }) {
+  const [urls, setUrls] = useState({
+    privacy_policy: attachedDocuments?.privacy_policy || "",
+    terms_of_service: attachedDocuments?.terms_of_service || "",
+    vpat: attachedDocuments?.vpat || "",
+    hecvat: attachedDocuments?.hecvat || "",
+    soc2: attachedDocuments?.soc2 || "",
+  });
+
+  function setUrl(docType, value) {
+    setUrls((prev) => ({ ...prev, [docType]: value }));
+  }
+
+  function handleSave() {
+    const payload = {};
+    for (const [docType, value] of Object.entries(urls)) {
+      const trimmed = value.trim();
+      payload[docType] = trimmed === "" ? null : trimmed;
+    }
+    onSaveAndRegenerate(payload);
+  }
+
+  return (
+    <div style={{ marginBottom: "18px" }}>
+      <div style={styles.formLabel}>Attach documents (optional)</div>
+      <div style={{ ...styles.overrideNote, marginBottom: "10px" }}>
+        Paste a link for anything the requester didn't provide, or that the automatic search
+        couldn't find — HECVAT and SOC 2 are never asked of the requester, only searched for.
+        Saved links are used the next time the report generates.
+      </div>
+      {Object.entries(DOC_TYPE_LABELS).map(([docType, label]) => (
+        <div key={docType} style={{ marginBottom: "8px" }}>
+          <label style={{ ...styles.formLabel, marginTop: 0 }}>{label}</label>
+          <input
+            style={styles.input}
+            type="text"
+            placeholder="https://..."
+            value={urls[docType]}
+            onChange={(e) => setUrl(docType, e.target.value)}
+            disabled={saving}
+          />
+        </div>
+      ))}
+      <button
+        style={{ ...styles.saveButton, opacity: saving ? 0.7 : 1 }}
+        onClick={handleSave}
+        disabled={saving}
+        type="button"
+      >
+        {saving ? "Saving…" : "Save & Regenerate"}
+      </button>
+    </div>
+  );
+}
+
+// ── Security Review panel: shown only when flags.security_flag is true ────────
+function SecurityReviewPanel({ securityReview, attachedDocuments, generating, onRegenerate, onSaveAndRegenerate }) {
+  const [copied, setCopied] = useState(false);
+  const status = securityReview?.status;
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(securityReview.servicenow_comment || "");
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard API unavailable — silently ignore, the text is still selectable
+    }
+  }
+
+  return (
+    <Section title="Security Review (Automated)">
+      {(generating || status === "pending") && (
+        <div style={styles.overrideNote}>Generating security report — searching the web for privacy policy, Terms of Service, VPAT, and HECVAT, then running the risk review. This can take up to two minutes.</div>
+      )}
+
+      {!generating && status === "failed" && (
+        <div style={styles.errorMsg}>
+          Report generation failed: {securityReview.error || "unknown error"}
+        </div>
+      )}
+
+      {!generating && (!status || status === "failed") && (
+        <button style={styles.saveButton} onClick={onRegenerate} type="button">
+          {status === "failed" ? "Retry" : "Generate report"}
+        </button>
+      )}
+
+      {!generating && status === "complete" && (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "14px" }}>
+            <span
+              style={{
+                ...styles.statusBadge,
+                background: riskTierColor(securityReview.risk_tier),
+              }}
+            >
+              {securityReview.risk_score}/10 · {securityReview.risk_tier}
+            </span>
+            {securityReview.hecvat_provided === false && (
+              <span style={{ ...styles.statusBadge, background: C.stone }}>No HECVAT</span>
+            )}
+          </div>
+
+          <div style={styles.formLabel}>Report</div>
+          <div style={styles.reportBox}>{securityReview.report_markdown}</div>
+
+          <div style={{ ...styles.formLabel, marginTop: "16px" }}>
+            ServiceNow risk summary comment
+          </div>
+          <div style={styles.reportBox}>{securityReview.servicenow_comment}</div>
+          <button style={{ ...styles.cancelButton, marginTop: "8px" }} onClick={handleCopy} type="button">
+            {copied ? "Copied ✓" : "Copy comment"}
+          </button>
+
+          {Array.isArray(securityReview.sources) && securityReview.sources.length > 0 && (
+            <>
+              <div style={{ ...styles.formLabel, marginTop: "16px" }}>Sources checked</div>
+              {securityReview.sources.map((s) => (
+                <SourceRow key={s.doc_type} source={s} />
+              ))}
+            </>
+          )}
+
+          {Array.isArray(securityReview.s3_archived) && securityReview.s3_archived.length > 0 && (
+            <>
+              <div style={{ ...styles.formLabel, marginTop: "16px" }}>
+                Archived to S3 (DataStored/{"{"}request_id{"}"}/...)
+              </div>
+              <div style={styles.reportBox}>
+                {securityReview.s3_archived.map((key) => (
+                  <div key={key}>{key}</div>
+                ))}
+              </div>
+            </>
+          )}
+
+          <button style={{ ...styles.saveButton, marginTop: "16px" }} onClick={onRegenerate} type="button">
+            Regenerate (same documents)
+          </button>
+
+          <div style={{ marginTop: "20px", paddingTop: "16px", borderTop: `1px solid ${C.line}` }}>
+            <AttachDocumentsForm
+              attachedDocuments={attachedDocuments}
+              onSaveAndRegenerate={onSaveAndRegenerate}
+              saving={generating}
+            />
+          </div>
+        </>
+      )}
+
+      {/* Also offer to attach documents before the first report ever runs. */}
+      {!generating && (!status || status === "failed") && (
+        <div style={{ marginTop: "16px", paddingTop: "16px", borderTop: `1px solid ${C.line}` }}>
+          <AttachDocumentsForm
+            attachedDocuments={attachedDocuments}
+            onSaveAndRegenerate={onSaveAndRegenerate}
+            saving={generating}
+          />
+        </div>
+      )}
+    </Section>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
-export default function RequestDetail({ request, onClose, onSaved }) {
-  const requestor = request.requestor || {};
-  const it_review = request.it_review || {};
-  const flags = request.flags || {};
-  const admin = request.admin || {};
+export default function RequestDetail({ request, onClose, onSaved, onRefreshed }) {
+  const [record, setRecord] = useState(request);
+  const [generatingReport, setGeneratingReport] = useState(false);
+  const pollRef = useRef(null);
+
+  // Reset local state when a different request is opened.
+  useEffect(() => {
+    setRecord(request);
+  }, [request.request_id]);
+
+  // Poll while a report is generating in the background (auto-triggered
+  // right after chatbot submission), so the panel updates itself without
+  // the admin needing to close/reopen or hit refresh.
+  useEffect(() => {
+    if (record.security_review?.status !== "pending") return undefined;
+
+    pollRef.current = setInterval(async () => {
+      try {
+        const updated = await getRequest(record.request_id);
+        setRecord(updated);
+        if (updated.security_review?.status !== "pending") {
+          onRefreshed?.(updated);
+        }
+      } catch {
+        // transient fetch error — just try again on the next tick
+      }
+    }, 4000);
+
+    return () => clearInterval(pollRef.current);
+  }, [record.request_id, record.security_review?.status]);
+
+  async function handleRegenerateReport() {
+    setGeneratingReport(true);
+    try {
+      const updated = await regenerateSecurityReport(record.request_id);
+      setRecord(updated);
+      onRefreshed?.(updated);
+    } catch (err) {
+      setRecord((r) => ({
+        ...r,
+        security_review: { status: "failed", error: err.message || "Request failed" },
+      }));
+    } finally {
+      setGeneratingReport(false);
+    }
+  }
+
+  async function handleSaveDocumentsAndRegenerate(attachedDocuments) {
+    setGeneratingReport(true);
+    try {
+      const savedRecord = await patchAdmin(record.request_id, { attached_documents: attachedDocuments });
+      setRecord(savedRecord);
+      const updated = await regenerateSecurityReport(record.request_id);
+      setRecord(updated);
+      onRefreshed?.(updated);
+    } catch (err) {
+      setRecord((r) => ({
+        ...r,
+        security_review: { status: "failed", error: err.message || "Request failed" },
+      }));
+    } finally {
+      setGeneratingReport(false);
+    }
+  }
+
+  const requestor = record.requestor || {};
+  const it_review = record.it_review || {};
+  const flags = record.flags || {};
+  const admin = record.admin || {};
 
   // Local override state — starts from whatever is already saved
   const [overrides, setOverrides] = useState({
@@ -142,7 +422,7 @@ export default function RequestDetail({ request, onClose, onSaved }) {
   const [overrideReason, setOverrideReason] = useState(admin.override_reason || "");
   const [overriddenBy, setOverriddenBy] = useState(admin.overridden_by || "");
   const [adminNotes, setAdminNotes] = useState(admin.admin_notes || "");
-  const [status, setStatus] = useState(request.status || "Submitted");
+  const [status, setStatus] = useState(record.status || "Submitted");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -195,7 +475,7 @@ export default function RequestDetail({ request, onClose, onSaved }) {
     };
 
     try {
-      const updated = await patchAdmin(request.request_id, payload);
+      const updated = await patchAdmin(record.request_id, payload);
       onSaved(updated);
     } catch (err) {
       setError(err.message || "Save failed. Please try again.");
@@ -219,7 +499,7 @@ export default function RequestDetail({ request, onClose, onSaved }) {
               {requestor.requested_for_name} · {requestor.department}
             </div>
             <div style={styles.panelProcurementId}>
-              Procurement ID: <span style={styles.panelProcurementIdValue}>{request.request_id}</span>
+              Procurement ID: <span style={styles.panelProcurementIdValue}>{record.request_id}</span>
             </div>
           </div>
           <button style={styles.closeButton} onClick={onClose} aria-label="Close panel">
@@ -334,6 +614,17 @@ export default function RequestDetail({ request, onClose, onSaved }) {
               onToggle={handleToggle}
             />
           </Section>
+
+          {/* ── Security Review (Automated) — only when flagged ── */}
+          {flags.security_flag === true && (
+            <SecurityReviewPanel
+              securityReview={record.security_review}
+              attachedDocuments={admin.attached_documents}
+              generating={generatingReport}
+              onRegenerate={handleRegenerateReport}
+              onSaveAndRegenerate={handleSaveDocumentsAndRegenerate}
+            />
+          )}
 
           {/* ── Override form ── */}
           <Section title="Override & Admin Notes">
@@ -638,6 +929,19 @@ const styles = {
     color: C.ink,
     boxSizing: "border-box",
     outline: "none",
+  },
+  reportBox: {
+    whiteSpace: "pre-wrap",
+    background: C.paper,
+    border: `1px solid ${C.line}`,
+    borderRadius: "6px",
+    padding: "12px 14px",
+    fontSize: "12.5px",
+    fontFamily: C.mono,
+    lineHeight: 1.6,
+    color: C.ink,
+    maxHeight: "340px",
+    overflowY: "auto",
   },
   errorMsg: {
     marginTop: "10px",
