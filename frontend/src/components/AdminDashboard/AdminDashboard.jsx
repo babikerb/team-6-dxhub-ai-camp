@@ -175,8 +175,10 @@ const SORT_OPTIONS = [
 function Badge({ label, color }) {
   return (
     <span
+      title={label}
       style={{
         display: "inline-block",
+        maxWidth: "100%",
         padding: "3px 10px",
         borderRadius: "3px",
         fontFamily: C.mono,
@@ -186,6 +188,11 @@ function Badge({ label, color }) {
         textTransform: "uppercase",
         background: color,
         color: C.white,
+        whiteSpace: "nowrap",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        boxSizing: "border-box",
+        verticalAlign: "top",
       }}
     >
       {label}
@@ -202,104 +209,124 @@ function emptyRequestor(requestor) {
 }
 
 // ── Review document cell ──────────────────────────────────────────────────────
-// Single column showing ATI / ITSO / INT review doc status, stacked like flags.
-function ReviewDocPill({ label, reviewSection }) {
+// One line per review type (ATI / ITSO / INT, plus AI once the backend sends
+// it) so the column never grows past 4 lines regardless of file count.
+const reviewDocStyles = {
+  row: {
+    display: "flex",
+    alignItems: "center",
+    gap: "5px",
+    lineHeight: "1.5",
+  },
+  label: {
+    fontFamily: C.mono,
+    fontSize: "10.5px",
+    fontWeight: 700,
+    letterSpacing: "0.04em",
+    color: C.stone,
+    flexShrink: 0,
+    width: "34px",
+    whiteSpace: "nowrap",
+  },
+  pendingText: {
+    fontFamily: C.mono,
+    fontSize: "10.5px",
+    color: C.stoneLight,
+    fontStyle: "italic",
+  },
+  noDocsText: {
+    fontFamily: C.mono,
+    fontSize: "10.5px",
+    color: "#B5650B",
+    fontStyle: "italic",
+  },
+  link: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "3px",
+    fontFamily: C.mono,
+    fontSize: "10.5px",
+    fontWeight: 600,
+    color: C.red,
+    textDecoration: "none",
+    minWidth: 0,
+  },
+  linkText: {
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    maxWidth: "150px",
+  },
+};
+
+function ReviewDocFileLink({ file }) {
+  const [hovered, setHovered] = useState(false);
+  return (
+    <a
+      href={file.url}
+      download={file.name}
+      target="_blank"
+      rel="noreferrer"
+      aria-label={`Download ${file.name}`}
+      title={`Download ${file.name}`}
+      style={{
+        ...reviewDocStyles.link,
+        textDecoration: hovered ? "underline" : "none",
+      }}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <span style={reviewDocStyles.linkText}>{file.name}</span>
+      <span aria-hidden="true">↓</span>
+    </a>
+  );
+}
+
+function ReviewDocLine({ label, reviewSection }) {
   if (!reviewSection || reviewSection.status === "pending") {
     return (
-      <span
-        style={{
-          display: "inline-block",
-          padding: "2px 8px",
-          borderRadius: "3px",
-          fontFamily: C.mono,
-          fontSize: "10.5px",
-          fontWeight: 700,
-          letterSpacing: "0.04em",
-          background: "transparent",
-          color: C.stoneLight,
-          border: `1px solid ${C.line}`,
-          marginRight: "4px",
-          marginBottom: "2px",
-        }}
-        title="Review in progress, gathering documents"
-      >
-        {label}: pending
-      </span>
+      <div style={reviewDocStyles.row}>
+        <span style={reviewDocStyles.label}>{label}:</span>
+        <span
+          style={reviewDocStyles.pendingText}
+          title="Review in progress, gathering documents"
+        >
+          pending
+        </span>
+      </div>
     );
   }
 
   const { status, message, files = [] } = reviewSection;
 
-  if (status === "no_docs") {
+  if (status === "no_docs" || files.length === 0) {
     return (
-      <span
-        style={{
-          display: "inline-block",
-          padding: "2px 8px",
-          borderRadius: "3px",
-          fontFamily: C.mono,
-          fontSize: "10.5px",
-          fontWeight: 700,
-          letterSpacing: "0.04em",
-          background: "transparent",
-          color: "#B5650B",
-          border: `1px solid #B5650B`,
-          marginRight: "4px",
-          marginBottom: "2px",
-        }}
-        title={message}
-      >
-        {label}: no docs
-      </span>
+      <div style={reviewDocStyles.row}>
+        <span style={reviewDocStyles.label}>{label}:</span>
+        <span style={reviewDocStyles.noDocsText} title={message}>
+          no docs
+        </span>
+      </div>
     );
   }
 
-  // status === "complete"
+  // status === "complete" with at least one file — one line per review type,
+  // so only the first file gets a link here (full list lives in the detail panel).
   return (
-    <span
-      style={{
-        display: "inline-flex",
-        flexDirection: "column",
-        gap: "1px",
-        marginBottom: "2px",
-      }}
-    >
-      {files.map((f) => (
-        <a
-          key={f.name}
-          href={f.url}
-          download={f.name}
-          target="_blank"
-          rel="noreferrer"
-          aria-label={`Download ${f.name}`}
-          style={{
-            display: "inline-block",
-            padding: "2px 8px",
-            borderRadius: "3px",
-            fontFamily: C.mono,
-            fontSize: "10.5px",
-            fontWeight: 700,
-            letterSpacing: "0.02em",
-            background: C.red,
-            color: C.white,
-            textDecoration: "none",
-            marginRight: "4px",
-          }}
-          title={`Download ${f.name}`}
-        >
-          {label}: {f.name} ↓
-        </a>
-      ))}
-    </span>
+    <div style={reviewDocStyles.row}>
+      <span style={reviewDocStyles.label}>{label}:</span>
+      <ReviewDocFileLink file={files[0]} />
+    </div>
   );
 }
 
 function ReviewDocsCell({ reviewDocs }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-      <ReviewDocPill label="ATI" reviewSection={reviewDocs?.ati} />
-      <ReviewDocPill label="SEC" reviewSection={reviewDocs?.itso} />
-      <ReviewDocPill label="INT" reviewSection={reviewDocs?.integration} />
+    <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
+      <ReviewDocLine label="ATI" reviewSection={reviewDocs?.ati} />
+      <ReviewDocLine label="ITSO" reviewSection={reviewDocs?.itso} />
+      <ReviewDocLine label="INT" reviewSection={reviewDocs?.integration} />
+      {reviewDocs?.ai && <ReviewDocLine label="AI" reviewSection={reviewDocs.ai} />}
     </div>
   );
 }
@@ -333,8 +360,10 @@ export default function AdminDashboard() {
       const items = Array.isArray(data.items) ? data.items : [];
       setRequests(items);
       setError(null);
+      // Table renders now — review-doc status (one S3/Dynamo lookup per
+      // request) loads separately below so it never delays the initial render.
+      if (!silent) setLoading(false);
 
-      // Fetch live review-doc status for every request in parallel.
       // Failures per-request are swallowed so one bad item can't break the table.
       const results = await Promise.allSettled(
         items.map((r) => getReviewDocs(r.request_id))
@@ -350,9 +379,8 @@ export default function AdminDashboard() {
       if (!silent) {
         setError(err.message || "Could not load requests.");
         setRequests([]);
+        setLoading(false);
       }
-    } finally {
-      if (!silent) setLoading(false);
     }
   }, []);
 
@@ -538,13 +566,22 @@ export default function AdminDashboard() {
 
         <div style={styles.tableWrapper}>
           <table style={styles.table}>
+            <colgroup>
+              <col style={{ width: "15%" }} />
+              <col style={{ width: "12%" }} />
+              <col style={{ width: "12%" }} />
+              <col style={{ width: "19%" }} />
+              <col style={{ width: "17%" }} />
+              <col style={{ width: "11%" }} />
+              <col style={{ width: "14%" }} />
+            </colgroup>
             <thead>
               <tr>
                 <th style={styles.th}>Software</th>
                 <th style={styles.th}>Requestor</th>
                 <th style={styles.th}>Department</th>
                 <th style={styles.th}>Status</th>
-                <th style={styles.th}>Flags</th>
+                <th style={{ ...styles.th, paddingLeft: "24px" }}>Flags</th>
                 <th style={styles.th}>Risk</th>
                 <th style={styles.th}>Review Docs</th>
               </tr>
@@ -605,7 +642,7 @@ export default function AdminDashboard() {
                             meaning; color stays reserved for Flags and Risk. */}
                         <Badge label={statusLabel(r.status)} color="var(--stone)" />
                       </td>
-                      <td style={styles.td}>
+                      <td style={{ ...styles.td, paddingLeft: "24px" }}>
                         <div style={styles.flagsRow}>
                           <FlagPill value={effective.ati.value} overridden={effective.ati.overridden} completed={effective.ati.completed} label="ATI" />
                           <FlagPill value={effective.security.value} overridden={effective.security.overridden} completed={effective.security.completed} label="ITSO" />
@@ -818,8 +855,7 @@ const styles = {
   },
   table: {
     width: "100%",
-    // Enough room for 7 columns without cramping the review docs pills.
-    minWidth: "960px",
+    tableLayout: "fixed",
     borderCollapse: "collapse",
   },
   th: {
@@ -844,6 +880,7 @@ const styles = {
     fontSize: "13px",
     color: C.ink,
     verticalAlign: "top",
+    overflowWrap: "break-word",
   },
   tdSub: {
     fontFamily: C.mono,
