@@ -84,45 +84,68 @@ function emptyRequestor(requestor) {
 }
 
 // ── Review document cell ──────────────────────────────────────────────────────
-// Renders the appropriate content for an ATI / ITSO / Integration docs column.
-// status: "pending" | "complete" | "no_docs"
-function ReviewDocCell({ reviewSection }) {
-  if (!reviewSection) {
+// Single column showing ATI / ITSO / INT review doc status, stacked like flags.
+function ReviewDocPill({ label, reviewSection }) {
+  if (!reviewSection || reviewSection.status === "pending") {
     return (
-      <span style={{ color: C.stoneLight, fontSize: "11.5px", fontStyle: "italic" }}>
-        Review in progress, gathering documents
+      <span
+        style={{
+          display: "inline-block",
+          padding: "2px 8px",
+          borderRadius: "3px",
+          fontFamily: C.mono,
+          fontSize: "10.5px",
+          fontWeight: 700,
+          letterSpacing: "0.04em",
+          background: "transparent",
+          color: C.stoneLight,
+          border: `1px solid ${C.line}`,
+          marginRight: "4px",
+          marginBottom: "2px",
+        }}
+        title="Review in progress, gathering documents"
+      >
+        {label}: pending
       </span>
     );
   }
 
   const { status, message, files = [] } = reviewSection;
 
-  if (status === "pending") {
-    return (
-      <span style={{ color: C.stoneLight, fontSize: "11.5px", fontStyle: "italic" }}>
-        {message || "Review in progress, gathering documents"}
-      </span>
-    );
-  }
-
   if (status === "no_docs") {
     return (
       <span
         style={{
+          display: "inline-block",
+          padding: "2px 8px",
+          borderRadius: "3px",
+          fontFamily: C.mono,
+          fontSize: "10.5px",
+          fontWeight: 700,
+          letterSpacing: "0.04em",
+          background: "transparent",
           color: "#B5650B",
-          fontSize: "11.5px",
-          fontStyle: "italic",
-          display: "block",
+          border: `1px solid #B5650B`,
+          marginRight: "4px",
+          marginBottom: "2px",
         }}
+        title={message}
       >
-        {message}
+        {label}: no docs
       </span>
     );
   }
 
-  // status === "complete" — show download links
+  // status === "complete"
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
+    <span
+      style={{
+        display: "inline-flex",
+        flexDirection: "column",
+        gap: "1px",
+        marginBottom: "2px",
+      }}
+    >
       {files.map((f) => (
         <a
           key={f.name}
@@ -132,19 +155,33 @@ function ReviewDocCell({ reviewSection }) {
           rel="noreferrer"
           aria-label={`Download ${f.name}`}
           style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "4px",
-            fontSize: "11.5px",
+            display: "inline-block",
+            padding: "2px 8px",
+            borderRadius: "3px",
             fontFamily: C.mono,
-            color: C.red,
+            fontSize: "10.5px",
+            fontWeight: 700,
+            letterSpacing: "0.02em",
+            background: C.red,
+            color: C.white,
             textDecoration: "none",
-            fontWeight: 600,
+            marginRight: "4px",
           }}
+          title={`Download ${f.name}`}
         >
-          ↓ {f.name}
+          {label}: {f.name} ↓
         </a>
       ))}
+    </span>
+  );
+}
+
+function ReviewDocsCell({ reviewDocs }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+      <ReviewDocPill label="ATI" reviewSection={reviewDocs?.ati} />
+      <ReviewDocPill label="SEC" reviewSection={reviewDocs?.itso} />
+      <ReviewDocPill label="INT" reviewSection={reviewDocs?.integration} />
     </div>
   );
 }
@@ -355,21 +392,19 @@ export default function AdminDashboard() {
                 <th style={styles.th}>Status</th>
                 <th style={styles.th}>Flags</th>
                 <th style={styles.th}>Risk</th>
-                <th style={styles.th}>ATI Docs</th>
-                <th style={styles.th}>ITSO Docs</th>
-                <th style={styles.th}>Integration Docs</th>
+                <th style={styles.th}>Review Docs</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={9} style={styles.emptyCell}>
+                  <td colSpan={7} style={styles.emptyCell}>
                     Loading…
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={9} style={styles.emptyCell}>
+                  <td colSpan={7} style={styles.emptyCell}>
                     {error
                       ? "Unable to load requests."
                       : requests.length === 0
@@ -430,13 +465,7 @@ export default function AdminDashboard() {
                         )}
                       </td>
                       <td style={styles.td} onClick={(e) => e.stopPropagation()}>
-                        <ReviewDocCell reviewSection={liveReviewDocs?.ati} />
-                      </td>
-                      <td style={styles.td} onClick={(e) => e.stopPropagation()}>
-                        <ReviewDocCell reviewSection={liveReviewDocs?.itso} />
-                      </td>
-                      <td style={styles.td} onClick={(e) => e.stopPropagation()}>
-                        <ReviewDocCell reviewSection={liveReviewDocs?.integration} />
+                        <ReviewDocsCell reviewDocs={liveReviewDocs} />
                       </td>
                     </tr>
                   );
@@ -591,9 +620,8 @@ const styles = {
   },
   table: {
     width: "100%",
-    // Enough room for 9 columns: 3 core + Status + Flags + Risk + 3 doc columns.
-    // The wrapper will scroll horizontally on narrow viewports.
-    minWidth: "1200px",
+    // Enough room for 7 columns without cramping the review docs pills.
+    minWidth: "960px",
     borderCollapse: "collapse",
   },
   th: {

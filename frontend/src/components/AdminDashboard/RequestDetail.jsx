@@ -162,7 +162,7 @@ function ReviewTypeRow({ label, reviewSection }) {
             aria-label={`Download ${f.name}`}
             style={rdStyles.downloadLink}
           >
-            ↓ {f.name}
+            {f.name} ↓
           </a>
         ))}
       </div>

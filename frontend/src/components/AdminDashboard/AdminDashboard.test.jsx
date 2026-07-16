@@ -308,43 +308,37 @@ describe('RequestDetail — override validation', () => {
 // ── AdminDashboard — review document columns ──────────────────────────────────
 
 describe('AdminDashboard — review document columns', () => {
-  it('renders ATI Docs, ITSO Docs, and Integration Docs column headers', async () => {
+  it('renders Review Docs column header', async () => {
     await renderDashboard();
-    expect(screen.getByText('ATI Docs')).toBeInTheDocument();
-    expect(screen.getByText('ITSO Docs')).toBeInTheDocument();
-    expect(screen.getByText('Integration Docs')).toBeInTheDocument();
+    expect(screen.getByText('Review Docs')).toBeInTheDocument();
   });
 
-  it('shows "Review in progress, gathering documents" for pending ATI docs (aaa-001)', async () => {
+  it('shows "pending" pills for requests with no review docs (aaa-001)', async () => {
     await renderDashboard();
-    // aaa-001 has all three as pending
-    const pendingCells = screen.getAllByText('Review in progress, gathering documents');
-    // 7 requests × 3 columns, some are pending; just verify at least some show
-    expect(pendingCells.length).toBeGreaterThan(0);
+    // aaa-001 has all three as pending — look for the pill text
+    const pendingPills = screen.getAllByText(/ATI: pending/);
+    expect(pendingPills.length).toBeGreaterThan(0);
   });
 
-  it('shows "No documents found. Contact vendor" for ITSO no_docs (ccc-003)', async () => {
+  it('shows "no docs" pill for ITSO no_docs state (ccc-003)', async () => {
     await renderDashboard();
-    // ccc-003 itso = no_docs, message = "No documents found. Contact vendor"
-    const noDocsCells = screen.getAllByText('No documents found. Contact vendor');
-    expect(noDocsCells.length).toBeGreaterThan(0);
+    const noDocsPills = screen.getAllByText('SEC: no docs');
+    expect(noDocsPills.length).toBeGreaterThan(0);
   });
 
-  it('shows "No documents found" for Integration no_docs (bbb-002)', async () => {
+  it('shows "no docs" pill for Integration no_docs state (bbb-002)', async () => {
     await renderDashboard();
-    // bbb-002 integration = no_docs, message = "No documents found"
-    const noDocCells = screen.getAllByText('No documents found');
-    expect(noDocCells.length).toBeGreaterThan(0);
+    const noDocsPills = screen.getAllByText('INT: no docs');
+    expect(noDocsPills.length).toBeGreaterThan(0);
   });
 
-  it('shows download links for complete ATI docs (bbb-002 has privacy_policy.pdf and vpat.pdf)', async () => {
+  it('shows download pills for complete ATI docs (bbb-002 has privacy_policy.pdf and vpat.pdf)', async () => {
     await renderDashboard();
-    // bbb-002 ati is complete with two files; ddd-004 also has vpat.pdf so use getAllByLabelText
     expect(screen.getAllByLabelText('Download privacy_policy.pdf').length).toBeGreaterThan(0);
     expect(screen.getAllByLabelText('Download vpat.pdf').length).toBeGreaterThan(0);
   });
 
-  it('shows download links for complete ITSO docs (bbb-002 has hecvat.pdf)', async () => {
+  it('shows download pills for complete ITSO docs (bbb-002 has hecvat.pdf)', async () => {
     await renderDashboard();
     expect(screen.getAllByLabelText('Download hecvat.pdf').length).toBeGreaterThan(0);
     expect(screen.getAllByLabelText('Download soc2.pdf').length).toBeGreaterThan(0);
@@ -353,7 +347,6 @@ describe('AdminDashboard — review document columns', () => {
 
   it('download link href matches the presigned URL in mock data', async () => {
     await renderDashboard();
-    // bbb-002's vpat.pdf has a specific presigned URL; find all and check at least one matches
     const links = screen.getAllByLabelText('Download vpat.pdf');
     const hrefs = links.map((l) => l.getAttribute('href'));
     expect(hrefs).toContain('https://example.s3.amazonaws.com/presigned/vpat.pdf');
@@ -361,7 +354,6 @@ describe('AdminDashboard — review document columns', () => {
 
   it('download links open in a new tab (target=_blank)', async () => {
     await renderDashboard();
-    // Any vpat.pdf link must have target=_blank
     const links = screen.getAllByLabelText('Download vpat.pdf');
     links.forEach((l) => expect(l.getAttribute('target')).toBe('_blank'));
   });
