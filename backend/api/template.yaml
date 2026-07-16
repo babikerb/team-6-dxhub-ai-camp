@@ -1,22 +1,27 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  SoftwareRequests API - 5 endpoints per Implementation_Plan.md API Contract.
-  Not deployed yet -- this is ready for `sam build && sam deploy --guided`
-  once AWS credentials are available. Handlers are unchanged from local dev
-  (see local_server.py); only this file and store.py's data access differ
-  between local and deployed.
+  SoftwareRequests API -- intake/chatbot/admin CRUD, Bedrock-powered chatbot
+  parsing, and the async security-report pipeline (fetch documents, call
+  Bedrock, archive to S3). CodeUri is the repo's backend/ folder (one level
+  up from this template) so handlers/ and chatbot/ deploy together as
+  siblings, matching the relative-path sys.path trick the handlers already
+  use locally -- see backend/api/handlers/security_report.py and friends.
 
 Parameters:
   SoftwareRequestsTableName:
     Type: String
-    Description: Name of the existing DynamoDB table (owned by the teammate setting up DynamoDB).
+    Description: Name of the existing DynamoDB table.
     Default: SoftwareRequests
+  DataBucketName:
+    Type: String
+    Description: S3 bucket for archived review documents (DataStored/<request_id>/...).
+    Default: dxhub-camp-2026-sdsu-software-request-and-institutional-c7fe61
 
 Globals:
   Function:
-    Runtime: python3.13
-    Timeout: 10
+    Runtime: python3.12
+    Timeout: 25
     MemorySize: 256
     Environment:
       Variables:
@@ -32,11 +37,12 @@ Resources:
         AllowHeaders: "'Content-Type'"
         AllowOrigin: "'*'"
 
+  # ---- Core CRUD ------------------------------------------------------------
   CreateRequestFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: .
-      Handler: handlers.create_request.handler
+      CodeUri: ..
+      Handler: api.handlers.create_request.handler
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref SoftwareRequestsTableName
@@ -51,8 +57,8 @@ Resources:
   GetRequestFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: .
-      Handler: handlers.get_request.handler
+      CodeUri: ..
+      Handler: api.handlers.get_request.handler
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref SoftwareRequestsTableName
@@ -67,8 +73,8 @@ Resources:
   ListRequestsFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: .
-      Handler: handlers.list_requests.handler
+      CodeUri: ..
+      Handler: api.handlers.list_requests.handler
       Policies:
         - DynamoDBReadPolicy:
             TableName: !Ref SoftwareRequestsTableName
@@ -80,27 +86,11 @@ Resources:
             Path: /requests
             Method: GET
 
-  ChatbotPatchFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: .
-      Handler: handlers.chatbot_patch.handler
-      Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref SoftwareRequestsTableName
-      Events:
-        Api:
-          Type: Api
-          Properties:
-            RestApiId: !Ref SoftwareRequestsApi
-            Path: /requests/{id}/chatbot
-            Method: PATCH
-
   AdminPatchFunction:
     Type: AWS::Serverless::Function
     Properties:
-      CodeUri: .
-      Handler: handlers.admin_patch.handler
+      CodeUri: ..
+      Handler: api.handlers.admin_patch.handler
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref SoftwareRequestsTableName
@@ -111,6 +101,168 @@ Resources:
             RestApiId: !Ref SoftwareRequestsApi
             Path: /requests/{id}/admin
             Method: PATCH
+
+  # ---- Chatbot (computes flags; triggers the security-report worker) -------
+  ChatbotPatchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ..
+      Handler: api.handlers.chatbot_patch.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SoftwareRequestsTableName
+        - LambdaInvokePolicy:
+            FunctionName: !Ref SecurityReportWorkerFunction
+      Environment:
+        Variables:
+          SECURITY_REPORT_WORKER_FUNCTION_NAME: !Ref SecurityReportWorkerFunction
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SoftwareRequestsApi
+            Path: /requests/{id}/chatbot
+            Method: PATCH
+
+  # ---- Chatbot Bedrock helpers (answer parsing, conversation, web search) --
+  ChatbotParseFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ..
+      Handler: api.handlers.chatbot_parse.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: "*"
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SoftwareRequestsApi
+            Path: /chatbot/parse
+            Method: POST
+
+  ChatbotConverseFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ..
+      Handler: api.handlers.chatbot_converse.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: "*"
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SoftwareRequestsApi
+            Path: /chatbot/converse
+            Method: POST
+
+  ChatbotAssistFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ..
+      Handler: api.handlers.chatbot_assist.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: "*"
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SoftwareRequestsApi
+            Path: /chatbot/assist
+            Method: POST
+
+  ChatbotMatchFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ..
+      Handler: api.handlers.chatbot_match.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: "*"
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SoftwareRequestsApi
+            Path: /chatbot/match-software
+            Method: POST
+
+  ChatbotFindDocumentFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ..
+      Handler: api.handlers.chatbot_find_document.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: "*"
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SoftwareRequestsApi
+            Path: /chatbot/find-document
+            Method: POST
+
+  # ---- Security report: trigger (API Gateway, fast) + worker (async, slow) -
+  # Split because API Gateway has a hard 29s timeout and Lambda has no
+  # equivalent of a "background task" once a response is sent -- see
+  # backend/api/handlers/security_report.py's module docstring.
+  SecurityReportFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ..
+      Handler: api.handlers.security_report.handler
+      Timeout: 10
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SoftwareRequestsTableName
+        - LambdaInvokePolicy:
+            FunctionName: !Ref SecurityReportWorkerFunction
+      Environment:
+        Variables:
+          SECURITY_REPORT_WORKER_FUNCTION_NAME: !Ref SecurityReportWorkerFunction
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SoftwareRequestsApi
+            Path: /requests/{id}/security-report
+            Method: POST
+
+  SecurityReportWorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ..
+      Handler: api.handlers.security_report.worker_handler
+      Timeout: 300
+      MemorySize: 512
+      # No Events -- invoked only via async Lambda "Event" invocation from
+      # ChatbotPatchFunction or SecurityReportFunction, never through API
+      # Gateway. That's what makes the long timeout safe.
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SoftwareRequestsTableName
+        - S3WritePolicy:
+            BucketName: !Ref DataBucketName
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: "*"
+      Environment:
+        Variables:
+          DATA_BUCKET: !Ref DataBucketName
 
 Outputs:
   ApiBaseUrl:
