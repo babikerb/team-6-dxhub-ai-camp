@@ -54,22 +54,16 @@ function Landing() {
 
 const styles = {
   page: {
-    minHeight: "100vh",
+    height: "100vh",
     display: "flex",
-    justifyContent: "center",
-    alignItems: "flex-start",
-    padding: "40px 20px",
     fontFamily: "'IBM Plex Sans', sans-serif",
     boxSizing: "border-box",
   },
   card: {
     width: "100%",
-    maxWidth: "520px",
+    height: "100%",
     background: "#FFFFFF",
-    border: "1px solid var(--line)",
-    borderRadius: "14px",
-    boxShadow: "0 1px 2px rgba(0,0,0,0.04), 0 16px 40px rgba(0,0,0,0.12)",
-    overflow: "hidden",
+    overflow: "auto",
   },
   header: {
     display: "flex",
@@ -77,6 +71,9 @@ const styles = {
     gap: "14px",
     padding: "18px 24px",
     background: "var(--ink)",
+    position: "sticky",
+    top: 0,
+    zIndex: 1,
   },
   headerBadge: {
     background: "var(--red)",

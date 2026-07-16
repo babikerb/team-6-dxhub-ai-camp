@@ -653,7 +653,7 @@ function RequesterChat({ requestId }) {
           <React.Fragment>
             <div style={styles.dotsWrap}>
               {visible.map((s, i) => (
-                <div key={s.id} style={styles.dotUnit}>
+                <div key={s.id} style={{ ...styles.dotUnit, flex: i < visible.length - 1 ? 1 : "0 0 auto" }}>
                   <div
                     style={{
                       ...styles.dot,
@@ -839,23 +839,15 @@ function RequesterChat({ requestId }) {
 
 const styles = {
   page: {
-    minHeight: "100vh",
+    height: "100vh",
     display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: "24px 20px",
     boxSizing: "border-box",
   },
   card: {
-    width: "75%",
-    maxWidth: "1000px",
-    minWidth: "320px",
-    height: "88vh",
+    width: "100%",
+    height: "100%",
     background: "#FFFFFF",
-    border: "1px solid var(--line)",
-    borderRadius: "14px",
     overflow: "hidden",
-    boxShadow: "0 1px 2px rgba(0,0,0,0.04), 0 16px 40px rgba(0,0,0,0.12)",
     display: "flex",
     flexDirection: "column",
   },

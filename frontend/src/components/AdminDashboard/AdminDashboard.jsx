@@ -365,6 +365,9 @@ const styles = {
     gap: "14px",
     padding: "18px 28px",
     background: C.ink,
+    position: "sticky",
+    top: 0,
+    zIndex: 1,
   },
   headerBadge: {
     background: C.red,
@@ -404,8 +407,6 @@ const styles = {
   },
   body: {
     padding: "28px",
-    maxWidth: "1140px",
-    margin: "0 auto",
   },
   filterBar: {
     display: "flex",
