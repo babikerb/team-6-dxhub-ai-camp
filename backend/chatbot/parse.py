@@ -180,11 +180,12 @@ HELP_HINTS = {
         "opt_out": '"not sure"',
     },
     "vendor_accessibility_url": {
-        "help": "This is the vendor's accessibility documentation — often called "
-                "a VPAT or Accessibility Conformance Report — showing the software "
-                "works with screen readers and assistive tech. Check the vendor's "
-                "site (an 'Accessibility' or 'Trust' page), paste a link, or ask "
-                "me to find it.",
+        "help": "This is the vendor's accessibility conformance documentation — a "
+                "VPAT, an accessibility roadmap, or a third-party accessibility "
+                "evaluation report — showing how well the software works with screen "
+                "readers and assistive technology. If you have any of these, paste a "
+                "link. If not, ask me to look and I'll gather what I find for the IT "
+                "reviewer to check. If none exists, that's okay too.",
         "opt_out": '"not sure"',
     },
 }
@@ -624,6 +625,12 @@ REVIEWER_DOC_TYPES = {
     "soc2": "SOC 2 report",
 }
 
+# Document questions where the bot should NOT force-pick one result. Vendors
+# often have many accessibility docs (e.g. a VPAT per product), so when the exact
+# one is ambiguous the bot hands the candidate links to the IT reviewer to choose,
+# rather than guessing. (ATI report generation is a later phase.)
+HANDOFF_DOCS = {"vendor_accessibility_url"}
+
 # Only the "which system(s)?" question gets the campus-systems context. The
 # yes/no "does it share data" question stays a clean yes/no — injecting the
 # systems there made it over-ask "which system?", which is this question's job.
@@ -693,14 +700,18 @@ def _web_search(query, max_results=5):
 
 def _strip_markdown(text):
     """The chat UI renders plain text, so remove markdown that would otherwise
-    show as literal characters (**bold**, __bold__, # headings, `code`). Leaves
-    dashes and numbered lists alone — those read fine as plain text."""
+    show as literal characters. Aggressive on purpose (catch residual/odd cases);
+    leaves dashes and numbered lists alone — those read fine as plain text."""
     if not text:
         return text
-    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)        # **bold** -> bold
-    text = re.sub(r"__(.+?)__", r"\1", text)            # __bold__ -> bold
-    text = re.sub(r"(?m)^\s{0,3}#{1,6}\s+", "", text)   # # / ## headings
-    text = text.replace("`", "")                         # `code`
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)  # [label](url) -> label
+    text = text.replace("**", "").replace("__", "")        # bold markers (paired or not)
+    text = text.replace("~~", "")                           # strikethrough
+    # *italic* -> italic, but never a "* " bullet at line start (space after *)
+    text = re.sub(r"(?<![\w*])\*(?=\S)([^*\n]+?)\*(?![\w*])", r"\1", text)
+    text = re.sub(r"(?m)^\s{0,3}#{1,6}\s+", "", text)      # # / ## headings
+    text = re.sub(r"(?m)^\s{0,3}>\s?", "", text)            # > blockquotes
+    text = text.replace("`", "")                            # `code`
     return text
 
 
@@ -769,13 +780,23 @@ def _assist_invoke(question_id, question_text, reply, intake_context, search_res
     if search_results is not None:
         if search_results:
             lines = "\n".join(f'- {r["title"]} — {r["url"]}' for r in search_results)
-            search_block = (
-                "\n\nWeb search results below. Pick the correct OFFICIAL document URL (prefer the "
-                "vendor's own domain). Then: set is_answer=false, put that URL in suggested_value, "
-                "set needs_search=false, and write a short message saying you found it and dropped "
-                "the link in for them to use (they can clear it if it's wrong). Do NOT set "
-                f"is_answer=true — they still need to confirm it.\n{lines}"
-            )
+            if question_id in HANDOFF_DOCS:
+                search_block = (
+                    "\n\nWeb search results below. If ONE result is clearly the single correct "
+                    "official document, set is_answer=false and put that URL in suggested_value. "
+                    "But accessibility documents are often ambiguous — a vendor may have MANY VPATs "
+                    "(one per product). If more than one result could plausibly be right, do NOT "
+                    "guess: set suggested_value to null and needs_search=false. The IT reviewer will "
+                    f"pick the correct one from the links. Keep your message brief.\n{lines}"
+                )
+            else:
+                search_block = (
+                    "\n\nWeb search results below. Pick the correct OFFICIAL document URL (prefer the "
+                    "vendor's own domain). Then: set is_answer=false, put that URL in suggested_value, "
+                    "set needs_search=false, and write a short message saying you found it and dropped "
+                    "the link in for them to use (they can clear it if it's wrong). Do NOT set "
+                    f"is_answer=true — they still need to confirm it.\n{lines}"
+                )
         else:
             search_block = (
                 "\n\nThe web search found nothing usable. Tell them you couldn't fetch it "
@@ -783,9 +804,9 @@ def _assist_invoke(question_id, question_text, reply, intake_context, search_res
             )
     elif can_search:
         search_block = (
-            "\n\nIf the requester is asking you to find/look up/search for/retrieve the document, "
-            "set needs_search=true and give a search_query using the vendor/software name from "
-            "context. Otherwise set needs_search=false."
+            "\n\nIf the requester asks you to find/look up/search for/retrieve the document, OR "
+            "says they don't have it / aren't sure where to find it, set needs_search=true and give "
+            "a search_query using the vendor/software name from context. Otherwise needs_search=false."
         )
     user = (
         f'The question: "{question_text}"{ctx}{guide}\n\n'
@@ -845,14 +866,35 @@ def assist_open_text(question_id, question_text, reply, intake_context=None):
         raw = _assist_invoke(question_id, question_text, reply, intake_context, search_results=results)
         # Anti-hallucination: only trust a suggested URL whose domain actually
         # appeared in the real search results — never a plausible-looking guess.
+        allowed = {_registrable_domain(r["url"]) for r in results}
         sv = raw.get("suggested_value")
-        if sv:
-            allowed = {_registrable_domain(r["url"]) for r in results}
-            if _registrable_domain(sv) not in allowed or not allowed:
-                raw["suggested_value"] = None
+        validated = bool(sv and _registrable_domain(sv) in allowed)
+        if not validated:
+            raw["suggested_value"] = None
+            if question_id in HANDOFF_DOCS and results:
+                # Ambiguous accessibility docs (e.g. many VPATs): don't guess —
+                # hand the candidate links to the IT reviewer to pick the right one.
+                candidates = [r["url"] for r in results[:4]]
+                raw["is_answer"] = False
+                raw["suggested_value"] = (
+                    "[For IT / ATI review — reviewer to confirm the correct document] "
+                    + " | ".join(candidates)
+                )
                 raw["message"] = (
-                    "I searched but couldn't confirm the official link with confidence. "
-                    "Try the vendor's website footer for 'Privacy Policy', or just type \"not sure\"."
+                    "I found a few possible accessibility documents but couldn't tell which is "
+                    "the exact one, so I've gathered the links for the IT reviewer to pull the "
+                    "correct VPAT. Press Enter to save them for the reviewer, or paste a specific "
+                    "link if you have one."
+                )
+            elif not results:
+                raw["message"] = (
+                    "I searched but couldn't find it automatically. Try the vendor's website "
+                    "(look for an 'Accessibility', 'Trust', or 'Legal' page), or type \"not sure\"."
+                )
+            else:
+                raw["message"] = (
+                    "I searched but couldn't confirm the exact link. Try the vendor's website, "
+                    "or just type \"not sure\"."
                 )
 
     is_ans = bool(raw.get("is_answer", True))
