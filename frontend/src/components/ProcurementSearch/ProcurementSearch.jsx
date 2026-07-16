@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { getRequestByProcurementId } from "./api.js";
 import {
   STATUS_ORDER,
@@ -152,6 +152,7 @@ function StatusStepper({ record }) {
 
 function ProcurementSearch() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [procurementId, setProcurementId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -176,8 +177,8 @@ function ProcurementSearch() {
     return () => clearInterval(timer);
   }, [activeId]);
 
-  async function handleSearch() {
-    const trimmed = procurementId.trim();
+  async function lookup(id) {
+    const trimmed = (id || "").trim();
     if (!trimmed) return;
 
     setLoading(true);
@@ -186,11 +187,25 @@ function ProcurementSearch() {
     try {
       const result = await getRequestByProcurementId(trimmed);
       setRecord(result);
+      setProcurementId(trimmed);
     } catch (err) {
       setError(err.message || "Something went wrong. Please try again.");
     } finally {
       setLoading(false);
     }
+  }
+
+  // Deep link from emails: /search?id=<procurementId>
+  useEffect(() => {
+    const fromQuery = searchParams.get("id");
+    if (fromQuery) {
+      lookup(fromQuery);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  async function handleSearch() {
+    await lookup(procurementId);
   }
 
   function searchAnother() {

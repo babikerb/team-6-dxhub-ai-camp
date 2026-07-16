@@ -14,9 +14,54 @@ invokes the security-report worker Lambda (security_report.invoke_worker_async
 local dev, where local_server.py's chatbot_patch_route backgrounds the same
 work itself via FastAPI BackgroundTasks instead). Either way, the requester's
 submission never blocks on report generation.
+
+After saving, sends:
+  - Email 2: application received / under review
+  - Email 3: missing required documents (when LLM cannot find them)
 """
 
-from . import security_report, store
+import os
+import sys
+
+from . import emailer, security_report, store
+
+# Map review flags → document types the LLM should try to locate.
+_FLAG_TO_DOC = {
+    "ati_flag": ("vpat", "VPAT accessibility conformance report"),
+    "security_flag": ("hecvat", "HECVAT security assessment questionnaire"),
+}
+
+
+def _find_missing_docs(record: dict, flags: dict) -> list[str]:
+    """Return human-readable labels of docs the LLM could not find."""
+    chatbot_dir = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "chatbot")
+    )
+    if chatbot_dir not in sys.path:
+        sys.path.insert(0, chatbot_dir)
+
+    import parse as chatbot_parse  # noqa: E402
+
+    vendor = (
+        (record.get("requestor") or {}).get("software_name")
+        or (record.get("requestor") or {}).get("vendor_website")
+        or ""
+    ).strip()
+    if not vendor:
+        return []
+
+    missing: list[str] = []
+    for flag_key, (doc_type, label) in _FLAG_TO_DOC.items():
+        if not flags.get(flag_key):
+            continue
+        try:
+            result = chatbot_parse.find_document(vendor, doc_type)
+            if not result.get("found"):
+                missing.append(label)
+        except Exception as exc:  # noqa: BLE001
+            print(f"find_document({vendor!r}, {doc_type}) failed: {exc}")
+            missing.append(label)
+    return missing
 
 
 def handler(event, context=None):
@@ -46,8 +91,24 @@ def handler(event, context=None):
     record["updated_at"] = store.now_iso()
     if flags.get("security_flag"):
         record["security_review"] = {"status": "pending"}
+    record.setdefault("notifications", {})
 
     store.save_request(record)
+
+    # Email 2 — application received
+    try:
+        if emailer.send_application_received_email(record):
+            store.save_request(record)
+    except Exception as exc:  # noqa: BLE001
+        print(f"Application-received email failed for {request_id}: {exc}")
+
+    # Email 3 — missing required documents for flagged reviews
+    try:
+        missing = _find_missing_docs(record, flags)
+        if missing and emailer.send_missing_docs_email(record, missing):
+            store.save_request(record)
+    except Exception as exc:  # noqa: BLE001
+        print(f"Missing-docs email failed for {request_id}: {exc}")
 
     if flags.get("security_flag"):
         security_report.invoke_worker_async(request_id)

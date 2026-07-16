@@ -14,6 +14,9 @@ Then hit http://localhost:8000 -- see README.md for endpoint list + curl example
 
 import json
 import os
+import threading
+import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 # Load .env before importing handlers so env vars like REVIEW_DOCS_BUCKET are set.
@@ -38,11 +41,44 @@ from handlers import (
     get_request,
     get_review_docs,
     list_requests,
+    reminder_check,
     review_upload,
     security_report,
 )
 
-app = FastAPI(title="SoftwareRequests API (local mock)")
+_REMINDER_POLL_SECONDS = int(os.environ.get("REMINDER_POLL_SECONDS", "60"))
+_reminder_started = False
+
+
+def _reminder_loop():
+    """Background poll that mirrors the EventBridge schedule in AWS."""
+    # Small startup delay so the server finishes binding before first scan.
+    time.sleep(5)
+    while True:
+        try:
+            reminder_check.process_reminders()
+        except Exception as exc:  # noqa: BLE001
+            print(f"reminder_check loop error: {exc}")
+        time.sleep(_REMINDER_POLL_SECONDS)
+
+
+def _ensure_reminder_thread():
+    global _reminder_started
+    if _reminder_started:
+        return
+    _reminder_started = True
+    thread = threading.Thread(target=_reminder_loop, name="reminder-check", daemon=True)
+    thread.start()
+    print(f"Started reminder-check thread (every {_REMINDER_POLL_SECONDS}s)")
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    _ensure_reminder_thread()
+    yield
+
+
+app = FastAPI(title="SoftwareRequests API (local mock)", lifespan=_lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -198,6 +234,12 @@ async def chatbot_find_document_route(request: Request):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.post("/internal/reminders")
+async def run_reminders():
+    """Manual trigger for the reminder job (local testing / ops)."""
+    return _from_lambda_response(reminder_check.handler({}))
 
 
 if __name__ == "__main__":

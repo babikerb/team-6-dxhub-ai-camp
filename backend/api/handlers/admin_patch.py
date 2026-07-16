@@ -20,7 +20,7 @@ priority over the requester-provided vendor_*_url fields when the security
 report next generates -- see security_report_generator._gather_documents().
 """
 
-from . import store
+from . import emailer, store
 
 ATTACHABLE_DOC_TYPES = {"privacy_policy", "terms_of_service", "vpat", "hecvat", "soc2"}
 FLAG_KEYS = ("ati_flag", "security_flag", "integration_flag")
@@ -36,11 +36,13 @@ def handler(event, context=None):
         return store.error_response(404, f"No request found with id {request_id}")
 
     body = store.parse_body(event)
+    previous_status = record.get("status")
 
     # Records written before these fields existed must still be patchable.
     admin = record.setdefault("admin", {})
     admin.setdefault("overrides", {key: None for key in FLAG_KEYS})
     admin.setdefault("review_completions", {key: False for key in FLAG_KEYS})
+    record.setdefault("notifications", {})
 
     overrides = body.get("overrides")
     if isinstance(overrides, dict):
@@ -85,4 +87,17 @@ def handler(event, context=None):
     record["updated_at"] = store.now_iso()
 
     store.save_request(record)
+
+    # Email 4 — final verdict when landing on Approved / Denied.
+    # Retry if a prior send failed (notifications.verdict_sent_at missing).
+    if record.get("status") in {"Approved", "Denied"} and (
+        new_status != previous_status
+        or not emailer.already_sent(record, "verdict_sent_at")
+    ):
+        try:
+            if emailer.send_verdict_email(record):
+                store.save_request(record)
+        except Exception as exc:  # noqa: BLE001
+            print(f"Verdict email failed for {request_id}: {exc}")
+
     return store.response(200, record)
