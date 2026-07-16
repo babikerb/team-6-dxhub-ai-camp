@@ -1,6 +1,7 @@
 """POST /requests -- create a request from the 18-question intake form."""
 
 from . import store
+from . import emailer
 
 REQUIRED_FIELDS = ["software_name", "requested_for_name", "requested_for_email"]
 
@@ -60,4 +61,10 @@ def handler(event, context=None):
     }
 
     store.save_request(record)
+
+    try:
+        emailer.send_ticket_created_email(record)
+    except Exception as exc:
+        print(f"Ticket-created email failed for {record.get('request_id')}: {exc}")
+
     return store.response(201, record)
