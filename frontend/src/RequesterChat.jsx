@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from "react";
-import { converseTurn, assistText, PARSEABLE, ASSISTED_TEXT } from "./chatbotParse.js";
+import { converseTurn, assistText, submitChatbot, PARSEABLE, ASSISTED_TEXT } from "./chatbotParse.js";
 
 // -----------------------------------------------------------------
 // MASTER QUESTION LIST (Part B)
@@ -90,39 +90,6 @@ const STEPS = [
       { label: "No, separate login", value: "no" },
       { label: "Not sure", value: "unsure" },
     ],
-  },
-  // AI capabilities — California Automated Decision System (ADS) tracking, AB 302.
-  // Captured up front so SDSU can inventory AI/ADS software instead of after the fact.
-  {
-    id: "ai_capabilities",
-    label: "AI",
-    bot: "Does this software use AI? For example, it writes or makes things for you, answers questions, gives suggestions, or figures things out on its own.",
-    type: "choice",
-    options: [
-      { label: "Yes", value: "yes" },
-      { label: "No", value: "no" },
-      { label: "Not sure", value: "unsure" },
-    ],
-  },
-  {
-    id: "ai_use_description",
-    label: "AI",
-    bot: "What do those AI features do, and how do you plan to use them?",
-    type: "text",
-    placeholder: "e.g. drafts email replies; suggests grades on quizzes",
-    skip: (a) => a.ai_capabilities !== "yes",
-  },
-  {
-    id: "ai_automated_decisions",
-    label: "AI",
-    bot: "Does it help decide things about people — like who gets admitted or hired, who receives financial aid, or what grade someone gets?",
-    type: "choice",
-    options: [
-      { label: "Yes", value: "yes" },
-      { label: "No", value: "no" },
-      { label: "Not sure", value: "unsure" },
-    ],
-    skip: (a) => a.ai_capabilities !== "yes",
   },
   // Block A — always asked
   {
@@ -241,6 +208,39 @@ const STEPS = [
     type: "text",
     placeholder: "Describe, or type 'no'",
   },
+  // AI / Automated Decision System (ADS) tracking — California AB 302. Grouped
+  // here with the other compliance questions, not inserted mid-flow.
+  {
+    id: "ai_capabilities",
+    label: "AI",
+    bot: "Does this software use AI? For example, it writes or makes things for you, answers questions, gives suggestions, or figures things out on its own.",
+    type: "choice",
+    options: [
+      { label: "Yes", value: "yes" },
+      { label: "No", value: "no" },
+      { label: "Not sure", value: "unsure" },
+    ],
+  },
+  {
+    id: "ai_use_description",
+    label: "AI",
+    bot: "What do those AI features do, and how do you plan to use them?",
+    type: "text",
+    placeholder: "e.g. drafts email replies; suggests grades on quizzes",
+    skip: (a) => a.ai_capabilities !== "yes",
+  },
+  {
+    id: "ai_automated_decisions",
+    label: "AI",
+    bot: "Does it help decide things about people — like who gets admitted or hired, who receives financial aid, or what grade someone gets?",
+    type: "choice",
+    options: [
+      { label: "Yes", value: "yes" },
+      { label: "No", value: "no" },
+      { label: "Not sure", value: "unsure" },
+    ],
+    skip: (a) => a.ai_capabilities !== "yes",
+  },
   {
     id: "vendor_privacy_policy_url",
     label: "Vendor",
@@ -257,10 +257,10 @@ const STEPS = [
   },
   {
     id: "vendor_accessibility_url",
-    label: "Vendor",
-    bot: 'Does the vendor have accessibility documentation — sometimes called a VPAT — showing the software works with screen readers and assistive tech? Paste a link, ask me to find it, or say "not sure."',
+    label: "Accessibility",
+    bot: 'Do you have the vendor\'s accessibility documentation — a VPAT, an accessibility roadmap, or a third-party accessibility evaluation report? Paste a link if you have one. If you don\'t, ask me to look and I\'ll gather what I find for the IT reviewer to check. Or say "not sure."',
     type: "text",
-    placeholder: "https:// ... or 'not sure'",
+    placeholder: "https:// ... paste a link, ask me to find it, or 'not sure'",
   },
 ];
 
@@ -340,6 +340,57 @@ export function evaluate(a) {
   };
 }
 
+// Maps the chatbot's raw answers to the `it_review` object the backend expects.
+// The backend (Person 4's compute_flags) computes the flags authoritatively from
+// this — the frontend evaluate() above is only for local display/logging.
+export function buildItReview(a) {
+  const level_1_categories = [
+    a.la_health === "yes" && "HIPAA",
+    a.la_pii === "yes" && "PII",
+    a.la_payment === "yes" && "PCI DSS / GLBA",
+    a.la_lawenforcement === "yes" && "Law Enforcement Records",
+  ].filter(Boolean);
+  const level_2_categories = [
+    a.lb_coursework === "yes" && "FERPA",
+    a.lb_employee === "yes" && "Employee Information",
+    a.lb_budget === "yes" && "Financials",
+    a.lb_research === "yes" && "Research/IP",
+    a.lb_legal === "yes" && "Attorney-client",
+  ].filter(Boolean);
+  return {
+    scope_of_usage: a.scope_of_usage,
+    estimated_users: a.estimated_users,
+    interaction_method: a.interaction_method,
+    software_category: a.software_category,
+    // boolean so the backend's bool() check doesn't treat "no" as truthy
+    shares_data_with_campus_system: a.shares_data_with_campus_system === "yes",
+    integration_explanation: a.integration_explanation || "",
+    sso_capable: a.sso_capable,
+    level_1_categories,
+    level_2_categories,
+    other_data_category: a.other_data_category || "",
+    compliance_requirements: a.compliance_requirements || "",
+    ai_capabilities: a.ai_capabilities,
+    ai_use_description: a.ai_use_description || "",
+    ai_automated_decisions: a.ai_automated_decisions || "",
+    vendor_privacy_policy_url: a.vendor_privacy_policy_url || "",
+    vendor_tos_url: a.vendor_tos_url || "",
+    vendor_accessibility_url: a.vendor_accessibility_url || "",
+  };
+}
+
+// Guaranteed catch-all: strip any markdown the backend missed, so literal
+// **, __, `, ~~, or [text](url) never reach the screen.
+function cleanMd(s) {
+  return String(s || "")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // [label](url) -> label
+    .replace(/\*\*/g, "")
+    .replace(/__/g, "")
+    .replace(/~~/g, "")
+    .replace(/`/g, "")
+    .replace(/(?<![\w*])\*(?=\S)([^*\n]+?)\*(?![\w*])/g, "$1"); // *italic* -> italic
+}
+
 // Renders a bot message as readable text: numbered/bulleted lines become an
 // indented list with a red marker; blank lines become spacing.
 function BotText({ text }) {
@@ -353,7 +404,7 @@ function BotText({ text }) {
           return (
             <div key={i} style={styles.botListItem}>
               <span style={styles.botListMarker}>{num[1]}.</span>
-              <span>{num[2]}</span>
+              <span>{cleanMd(num[2])}</span>
             </div>
           );
         }
@@ -361,14 +412,14 @@ function BotText({ text }) {
           return (
             <div key={i} style={styles.botListItem}>
               <span style={styles.botListMarker}>•</span>
-              <span>{bullet[1]}</span>
+              <span>{cleanMd(bullet[1])}</span>
             </div>
           );
         }
         if (line.trim() === "") return <div key={i} style={{ height: "7px" }} />;
         return (
           <div key={i} style={{ marginBottom: "2px" }}>
-            {line}
+            {cleanMd(line)}
           </div>
         );
       })}
@@ -388,6 +439,7 @@ function RequesterChat({ requestId }) {
   const [pending, setPending] = useState(null);        // {value,label} awaiting confirm
   const [revealButtons, setRevealButtons] = useState(false); // model laid out options
   const [convo, setConvo] = useState([]);              // per-question turn history
+  const [isMobile, setIsMobile] = useState(false);     // phone vs computer layout
   const scrollRef = useRef(null);
 
   useEffect(() => {
@@ -395,6 +447,22 @@ function RequesterChat({ requestId }) {
       scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
     }
   }, [log]);
+
+  // Track phone-sized viewports so the chat frame can go full-screen on mobile
+  // and stay a centered card on desktop.
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 640px)");
+    const update = () => setIsMobile(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+
+  const pageStyle = isMobile ? { ...styles.page, ...styles.pageMobile } : styles.page;
+  const cardStyle = isMobile ? { ...styles.card, ...styles.cardMobile } : styles.card;
+  const mastheadStyle = isMobile ? { ...styles.masthead, ...styles.mastheadMobile } : styles.masthead;
+  const logStyle = isMobile ? { ...styles.log, ...styles.logMobile } : styles.log;
+  const textRowStyle = isMobile ? { ...styles.textRow, ...styles.textRowMobile } : styles.textRow;
 
   const currentStep = STEPS[stepIndex];
   const visible = useMemo(() => visibleSteps(answers), [answers]);
@@ -427,9 +495,13 @@ function RequesterChat({ requestId }) {
           text: "Thanks — that's everything I need. Your request has been submitted for IT Review.",
         },
       ]);
-      // Flags are computed here for the reviewer dashboard, but intentionally never shown to the requester.
-      const flags = evaluate(updatedAnswers);
-      console.log("Computed flags (staff/admin only):", flags);
+      // Save to the backend: it computes the flags and writes it_review + flags
+      // to this request, which is what the admin dashboard reads. (evaluate() is
+      // kept only for a local console preview.)
+      console.log("Local flag preview:", evaluate(updatedAnswers));
+      submitChatbot(requestId, buildItReview(updatedAnswers))
+        .then((rec) => console.log("Saved to request; flags set:", rec.flags))
+        .catch((e) => console.warn("Chatbot save failed (is this a real request id?):", e.message));
       setDone(true);
     }
   }
@@ -577,10 +649,10 @@ function RequesterChat({ requestId }) {
   const totalVisible = visible.length;
 
   return (
-    <div style={styles.page}>
-      <div style={styles.card}>
+    <div style={pageStyle}>
+      <div style={cardStyle}>
         {/* Masthead */}
-        <div style={styles.masthead}>
+        <div style={mastheadStyle}>
           <div style={styles.badge}>SDSU</div>
           <div>
             <div style={styles.headline}>Software Request Assistant</div>
@@ -622,7 +694,7 @@ function RequesterChat({ requestId }) {
         )}
 
         {/* Log */}
-        <div ref={scrollRef} style={styles.log}>
+        <div ref={scrollRef} style={logStyle}>
           {log.map((entry, i) =>
             entry.from === "bot" ? (
               <div key={i} style={styles.botEntry}>
@@ -655,7 +727,7 @@ function RequesterChat({ requestId }) {
             </div>
           ) : isConversational ? (
             <div style={styles.multiWrap}>
-              <div style={styles.textRow}>
+              <div style={textRowStyle}>
                 <input
                   style={styles.textField}
                   value={textInput}
@@ -736,14 +808,14 @@ function RequesterChat({ requestId }) {
                   <span style={styles.choiceMark}>?</span>
                 </button>
               </div>
-              <div style={styles.textRow}>
+              <div style={textRowStyle}>
                 <button style={styles.textSubmit} onClick={submitMulti} disabled={multiSelected.length === 0}>
                   Continue
                 </button>
               </div>
             </div>
           ) : (
-            <div style={styles.textRow}>
+            <div style={textRowStyle}>
               <input
                 style={styles.textField}
                 value={textInput}
@@ -787,6 +859,29 @@ const styles = {
     boxShadow: "0 1px 2px rgba(0,0,0,0.04), 0 16px 40px rgba(0,0,0,0.12)",
     display: "flex",
     flexDirection: "column",
+  },
+  // --- Phone layout: fill the screen edge-to-edge, no rounded frame ---
+  pageMobile: {
+    padding: "0",
+    alignItems: "stretch",
+  },
+  cardMobile: {
+    width: "100%",
+    maxWidth: "100%",
+    minWidth: 0,
+    height: "100vh",
+    borderRadius: 0,
+    border: "none",
+  },
+  mastheadMobile: {
+    padding: "14px 16px",
+  },
+  logMobile: {
+    paddingLeft: "16px",
+    paddingRight: "16px",
+  },
+  textRowMobile: {
+    padding: "14px 16px",
   },
   masthead: {
     display: "flex",
@@ -849,15 +944,16 @@ const styles = {
     letterSpacing: "0.02em",
   },
   log: {
-    padding: "0 28px",
+    paddingLeft: "28px",
+    paddingRight: "28px",
+    paddingTop: "18px",
+    paddingBottom: "22px",
     flex: "1 1 auto",
     minHeight: "200px",
     overflowY: "auto",
     display: "flex",
     flexDirection: "column",
     gap: "18px",
-    paddingBottom: "22px",
-    paddingTop: "18px",
   },
   botEntry: {
     display: "flex",
