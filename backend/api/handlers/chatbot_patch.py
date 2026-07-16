@@ -8,12 +8,15 @@ delivers backend/rules_engine/ -- same input/output shape, no other changes
 needed here.
 
 If security_flag comes back true, this marks security_review.status="pending"
-synchronously so the dashboard reflects it immediately -- the actual report
-generation runs afterward as a background task (local_server.py's
-chatbot_patch_route), never blocking the requester's submission.
+synchronously so the dashboard reflects it immediately, then asynchronously
+invokes the security-report worker Lambda (security_report.invoke_worker_async
+-- a real, fire-and-forget Lambda invocation in deployed AWS; a no-op in
+local dev, where local_server.py's chatbot_patch_route backgrounds the same
+work itself via FastAPI BackgroundTasks instead). Either way, the requester's
+submission never blocks on report generation.
 """
 
-from . import store
+from . import security_report, store
 
 
 def handler(event, context=None):
@@ -45,4 +48,8 @@ def handler(event, context=None):
         record["security_review"] = {"status": "pending"}
 
     store.save_request(record)
+
+    if flags.get("security_flag"):
+        security_report.invoke_worker_async(request_id)
+
     return store.response(200, record)
