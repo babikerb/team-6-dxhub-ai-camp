@@ -140,3 +140,45 @@ export async function matchSoftware(softwareName, useDescription, catalog) {
 export async function getReviewDocs(requestId) {
   return request(`/requests/${encodeURIComponent(requestId)}/review-docs`);
 }
+
+/**
+ * Upload a review document to S3 and register it.
+ *
+ * Three steps, because the file goes straight from the browser to S3 and never
+ * passes through the API (API Gateway caps payloads at 10 MB; VPAT PDFs exceed
+ * it): ask for a presigned URL, PUT the bytes, then confirm so DynamoDB
+ * reflects the new file.
+ *
+ * The Content-Type header MUST match what the URL was signed with, or S3
+ * rejects the PUT with SignatureDoesNotMatch.
+ *
+ * kind: "document" (vendor evidence) | "final_report" (the reviewer's own review)
+ * Returns the updated request record.
+ */
+export async function uploadReviewDoc(requestId, reviewType, file, kind = "document") {
+  const contentType = file.type || "application/octet-stream";
+  const { upload_url, filename } = await request(
+    `/requests/${encodeURIComponent(requestId)}/review-docs/upload-url`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        review_type: reviewType,
+        filename: file.name,
+        content_type: contentType,
+        kind,
+      }),
+    }
+  );
+
+  const put = await fetch(upload_url, {
+    method: "PUT",
+    headers: { "Content-Type": contentType },
+    body: file,
+  });
+  if (!put.ok) throw new Error(`Upload to S3 failed (${put.status})`);
+
+  return request(`/requests/${encodeURIComponent(requestId)}/review-docs/confirm`, {
+    method: "POST",
+    body: JSON.stringify({ review_type: reviewType, filename, kind }),
+  });
+}

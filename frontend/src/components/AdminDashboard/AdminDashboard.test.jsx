@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { MOCK_REQUESTS } from './mockData.js';
 import AdminDashboard from './AdminDashboard.jsx';
 import RequestDetail from './RequestDetail.jsx';
@@ -37,7 +38,7 @@ beforeEach(() => {
 });
 
 async function renderDashboard() {
-  render(<AdminDashboard />);
+  render(<AdminDashboard />, { wrapper: MemoryRouter });
   await waitFor(() => {
     expect(screen.getByText('CampusHealth360')).toBeInTheDocument();
   });
@@ -180,7 +181,7 @@ describe('AdminDashboard — list view', () => {
       requestor: { ...MOCK_REQUESTS[0].requestor, software_name: 'LegacyTool' },
     };
     listRequests.mockResolvedValue({ items: [legacy], count: 1 });
-    render(<AdminDashboard />);
+    render(<AdminDashboard />, { wrapper: MemoryRouter });
     await waitFor(() => expect(screen.getByText('LegacyTool')).toBeInTheDocument());
     expect(screen.getByText('FLAGSCOMPUTED')).toBeInTheDocument();
   });

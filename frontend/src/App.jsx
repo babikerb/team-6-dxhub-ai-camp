@@ -4,6 +4,7 @@ import IntakeForm from "./components/IntakeForm/IntakeForm.jsx";
 import ProcurementSearch from "./components/ProcurementSearch/ProcurementSearch.jsx";
 import RequesterChat from "./RequesterChat.jsx";
 import AdminDashboard from "./components/AdminDashboard/AdminDashboard.jsx";
+import ReviewDashboard from "./components/AdminDashboard/ReviewDashboard.jsx";
 
 function IntakeFormPage() {
   const navigate = useNavigate();
@@ -24,6 +25,8 @@ function App() {
         <Route path="/search" element={<ProcurementSearch />} />
         <Route path="/chatbot/:requestId" element={<ChatbotPage />} />
         <Route path="/admin" element={<AdminDashboard />} />
+        {/* One screen, three reviews — reviewType is ati | itso | integration. */}
+        <Route path="/admin/:requestId/review/:reviewType" element={<ReviewDashboard />} />
       </Routes>
     </BrowserRouter>
   );

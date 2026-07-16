@@ -38,6 +38,7 @@ from handlers import (
     get_request,
     get_review_docs,
     list_requests,
+    review_upload,
 )
 
 app = FastAPI(title="SoftwareRequests API (local mock)")
@@ -134,6 +135,18 @@ async def chatbot_match_route(request: Request):
 async def chatbot_identify_route(request: Request):
     event = await _to_event(request)
     return _from_lambda_response(chatbot_identify.handler(event))
+
+
+@app.post("/requests/{request_id}/review-docs/upload-url")
+async def review_upload_url_route(request: Request, request_id: str):
+    event = await _to_event(request, {"id": request_id})
+    return _from_lambda_response(review_upload.upload_url_handler(event))
+
+
+@app.post("/requests/{request_id}/review-docs/confirm")
+async def review_upload_confirm_route(request: Request, request_id: str):
+    event = await _to_event(request, {"id": request_id})
+    return _from_lambda_response(review_upload.confirm_handler(event))
 
 
 @app.post("/requests/{request_id}/ati-documents")

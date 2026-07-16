@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { listRequests, getReviewDocs } from "../../api.js";
 import RequestDetail from "./RequestDetail.jsx";
 import { STATUS_ORDER, STATUS_LABELS, statusLabel } from "./statusConfig.js";
@@ -19,6 +20,14 @@ const C = {
   mono: "'IBM Plex Mono', monospace",
   serif: "'Source Serif 4', serif",
 };
+
+// The three review dashboards reachable from each row. Order matches the
+// flag columns so the eye tracks across the row consistently.
+const REVIEW_DASHBOARDS = [
+  { type: "ati", label: "ATI Dashboard" },
+  { type: "itso", label: "Security Dashboard" },
+  { type: "integration", label: "Data Integration Dashboard" },
+];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -333,6 +342,7 @@ function ReviewDocsCell({ reviewDocs }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function AdminDashboard() {
+  const navigate = useNavigate();
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -573,14 +583,17 @@ export default function AdminDashboard() {
 
         <div style={styles.tableWrapper}>
           <table style={styles.table}>
+            {/* table-layout is fixed, so every column needs a <col> here — a
+                column without one collapses to zero width. Widths total 100%. */}
             <colgroup>
-              <col style={{ width: "15%" }} />
-              <col style={{ width: "12%" }} />
-              <col style={{ width: "12%" }} />
-              <col style={{ width: "19%" }} />
-              <col style={{ width: "17%" }} />
-              <col style={{ width: "11%" }} />
-              <col style={{ width: "14%" }} />
+              <col style={{ width: "13%" }} /> {/* Software */}
+              <col style={{ width: "11%" }} /> {/* Requestor */}
+              <col style={{ width: "10%" }} /> {/* Department */}
+              <col style={{ width: "14%" }} /> {/* Status */}
+              <col style={{ width: "15%" }} /> {/* Flags */}
+              <col style={{ width: "8%" }} />  {/* Risk */}
+              <col style={{ width: "12%" }} /> {/* Review Docs */}
+              <col style={{ width: "17%" }} /> {/* Reviews */}
             </colgroup>
             <thead>
               <tr>
@@ -591,6 +604,7 @@ export default function AdminDashboard() {
                 <th style={{ ...styles.th, paddingLeft: "24px" }}>Flags</th>
                 <th style={styles.th}>Risk</th>
                 <th style={styles.th}>Review Docs</th>
+                <th style={styles.th}>Reviews</th>
               </tr>
             </thead>
             <tbody>
@@ -669,6 +683,22 @@ export default function AdminDashboard() {
                       </td>
                       <td style={styles.td} onClick={(e) => e.stopPropagation()}>
                         <ReviewDocsCell reviewDocs={liveReviewDocs} />
+                      </td>
+                      {/* stopPropagation: the row itself opens the detail panel,
+                          and these buttons navigate somewhere else entirely. */}
+                      <td style={styles.td} onClick={(e) => e.stopPropagation()}>
+                        <div style={styles.reviewBtns}>
+                          {REVIEW_DASHBOARDS.map((d) => (
+                            <button
+                              key={d.type}
+                              style={styles.reviewBtn}
+                              title={`Open the ${d.label} for this request`}
+                              onClick={() => navigate(`/admin/${r.request_id}/review/${d.type}`)}
+                            >
+                              {d.label}
+                            </button>
+                          ))}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -865,6 +895,28 @@ const styles = {
     width: "100%",
     tableLayout: "fixed",
     borderCollapse: "collapse",
+  },
+  reviewBtns: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "stretch",
+    gap: "4px",
+    minWidth: "150px",
+  },
+  reviewBtn: {
+    fontFamily: C.mono,
+    fontSize: "10.5px",
+    fontWeight: 700,
+    color: C.ink,
+    backgroundColor: C.white,
+    border: `1px solid ${C.line}`,
+    paddingTop: "6px",
+    paddingRight: "8px",
+    paddingBottom: "6px",
+    paddingLeft: "8px",
+    cursor: "pointer",
+    textAlign: "left",
+    whiteSpace: "nowrap",
   },
   th: {
     padding: "12px 16px",
