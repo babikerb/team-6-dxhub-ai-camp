@@ -17,6 +17,16 @@ Parameters:
     Description: Name of the existing S3 bucket holding reviewer-uploaded documents.
     Default: dxhub-camp-2026-sdsu-software-request-and-institutional-c7fe61
 
+  SesSourceEmail:
+    Type: String
+    Description: SES-verified "From" address used to send request notification emails.
+    Default: sdsusoftwarerequest@gmail.com
+
+  FrontendBaseUrl:
+    Type: String
+    Description: Base URL of the deployed frontend, used to build the "continue" link in emails.
+    Default: http://localhost:5173
+
 Globals:
   Function:
     Runtime: python3.12
@@ -45,9 +55,20 @@ Resources:
     Properties:
       CodeUri: .
       Handler: handlers.create_request.handler
+      Environment:
+        Variables:
+          EMAILS_DISABLED: "false"
+          SES_SOURCE_EMAIL: !Ref SesSourceEmail
+          FRONTEND_BASE_URL: !Ref FrontendBaseUrl
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref SoftwareRequestsTableName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+              Resource: "*"
       Events:
         Api:
           Type: Api
@@ -93,9 +114,20 @@ Resources:
     Properties:
       CodeUri: .
       Handler: handlers.chatbot_patch.handler
+      Environment:
+        Variables:
+          EMAILS_DISABLED: "false"
+          SES_SOURCE_EMAIL: !Ref SesSourceEmail
+          FRONTEND_BASE_URL: !Ref FrontendBaseUrl
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref SoftwareRequestsTableName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - ses:SendEmail
+                - ses:SendRawEmail
+              Resource: "*"
       Events:
         Api:
           Type: Api
