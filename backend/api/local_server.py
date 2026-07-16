@@ -28,6 +28,7 @@ from handlers import (
     chatbot_patch,
     create_request,
     get_request,
+    get_review_docs,
     list_requests,
 )
 
@@ -89,6 +90,12 @@ async def chatbot_patch_route(request: Request, request_id: str):
 async def admin_patch_route(request: Request, request_id: str):
     event = await _to_event(request, {"id": request_id})
     return _from_lambda_response(admin_patch.handler(event))
+
+
+@app.get("/requests/{request_id}/review-docs")
+async def get_review_docs_route(request: Request, request_id: str):
+    event = await _to_event(request, {"id": request_id})
+    return _from_lambda_response(get_review_docs.handler(event))
 
 
 @app.post("/chatbot/parse")

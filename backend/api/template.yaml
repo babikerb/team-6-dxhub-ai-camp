@@ -1,7 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >
-  SoftwareRequests API - 5 endpoints per Implementation_Plan.md API Contract.
+  SoftwareRequests API - 5 endpoints per Implementation_Plan.md API Contract,
+  plus S3-triggered review document handling.
   Not deployed yet -- this is ready for `sam build && sam deploy --guided`
   once AWS credentials are available. Handlers are unchanged from local dev
   (see local_server.py); only this file and store.py's data access differ
@@ -21,8 +22,30 @@ Globals:
     Environment:
       Variables:
         TABLE_NAME: !Ref SoftwareRequestsTableName
+        REVIEW_DOCS_BUCKET: !Ref ReviewDocsBucket
 
 Resources:
+
+  # ── S3 Bucket for review documents ───────────────────────────────────────────
+  ReviewDocsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "sdsu-review-docs-${AWS::AccountId}-${AWS::Region}"
+      # Block all public access — files are served only via presigned URLs.
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      # Presigned URLs expire after 1 hour; objects can live indefinitely.
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireIncompleteMultipartUploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+
+  # ── API Gateway ───────────────────────────────────────────────────────────────
   SoftwareRequestsApi:
     Type: AWS::Serverless::Api
     Properties:
@@ -32,6 +55,7 @@ Resources:
         AllowHeaders: "'Content-Type'"
         AllowOrigin: "'*'"
 
+  # ── Existing request-handling Lambdas ─────────────────────────────────────────
   CreateRequestFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -112,7 +136,65 @@ Resources:
             Path: /requests/{id}/admin
             Method: PATCH
 
+  # ── Review Documents: S3 event trigger ───────────────────────────────────────
+  #
+  # Fires on every PutObject under DataStored/. Parses the key into
+  # <request_id>/<review_type>/<filename>, lists all current files for that
+  # review type, and writes the updated review_docs subtree to DynamoDB.
+  S3EventFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: handlers.s3_event_handler.handler
+      Timeout: 30
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SoftwareRequestsTableName
+        - S3ReadPolicy:
+            BucketName: !Ref ReviewDocsBucket
+      Events:
+        ReviewDocUploaded:
+          Type: S3
+          Properties:
+            Bucket: !Ref ReviewDocsBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: "DataStored/"
+
+  # ── Review Documents: API endpoint ───────────────────────────────────────────
+  #
+  # Returns the review_docs subtree from DynamoDB for a request, augmented with
+  # short-lived presigned S3 URLs so admins can download files directly.
+  ReviewDocsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: handlers.get_review_docs.handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref SoftwareRequestsTableName
+        # Presigned URL generation requires s3:GetObject on the bucket.
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+              Resource: !Sub "arn:aws:s3:::${ReviewDocsBucket}/DataStored/*"
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SoftwareRequestsApi
+            Path: /requests/{id}/review-docs
+            Method: GET
+
 Outputs:
   ApiBaseUrl:
     Description: Base URL for the deployed API
     Value: !Sub "https://${SoftwareRequestsApi}.execute-api.${AWS::Region}.amazonaws.com/dev/"
+
+  ReviewDocsBucketName:
+    Description: S3 bucket holding reviewer-uploaded documents
+    Value: !Ref ReviewDocsBucket

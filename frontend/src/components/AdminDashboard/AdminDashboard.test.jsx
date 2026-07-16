@@ -296,3 +296,124 @@ describe('RequestDetail — override validation', () => {
     );
   });
 });
+
+
+// ── AdminDashboard — review document columns ──────────────────────────────────
+
+describe('AdminDashboard — review document columns', () => {
+  it('renders ATI Docs, ITSO Docs, and Integration Docs column headers', async () => {
+    await renderDashboard();
+    expect(screen.getByText('ATI Docs')).toBeInTheDocument();
+    expect(screen.getByText('ITSO Docs')).toBeInTheDocument();
+    expect(screen.getByText('Integration Docs')).toBeInTheDocument();
+  });
+
+  it('shows "Review in progress, gathering documents" for pending ATI docs (aaa-001)', async () => {
+    await renderDashboard();
+    // aaa-001 has all three as pending
+    const pendingCells = screen.getAllByText('Review in progress, gathering documents');
+    // 7 requests × 3 columns, some are pending; just verify at least some show
+    expect(pendingCells.length).toBeGreaterThan(0);
+  });
+
+  it('shows "No documents found. Contact vendor" for ITSO no_docs (ccc-003)', async () => {
+    await renderDashboard();
+    // ccc-003 itso = no_docs, message = "No documents found. Contact vendor"
+    const noDocsCells = screen.getAllByText('No documents found. Contact vendor');
+    expect(noDocsCells.length).toBeGreaterThan(0);
+  });
+
+  it('shows "No documents found" for Integration no_docs (bbb-002)', async () => {
+    await renderDashboard();
+    // bbb-002 integration = no_docs, message = "No documents found"
+    const noDocCells = screen.getAllByText('No documents found');
+    expect(noDocCells.length).toBeGreaterThan(0);
+  });
+
+  it('shows download links for complete ATI docs (bbb-002 has privacy_policy.pdf and vpat.pdf)', async () => {
+    await renderDashboard();
+    // bbb-002 ati is complete with two files; ddd-004 also has vpat.pdf so use getAllByLabelText
+    expect(screen.getAllByLabelText('Download privacy_policy.pdf').length).toBeGreaterThan(0);
+    expect(screen.getAllByLabelText('Download vpat.pdf').length).toBeGreaterThan(0);
+  });
+
+  it('shows download links for complete ITSO docs (bbb-002 has hecvat.pdf)', async () => {
+    await renderDashboard();
+    expect(screen.getAllByLabelText('Download hecvat.pdf').length).toBeGreaterThan(0);
+    expect(screen.getAllByLabelText('Download soc2.pdf').length).toBeGreaterThan(0);
+    expect(screen.getAllByLabelText('Download terms_of_service.pdf').length).toBeGreaterThan(0);
+  });
+
+  it('download link href matches the presigned URL in mock data', async () => {
+    await renderDashboard();
+    // bbb-002's vpat.pdf has a specific presigned URL; find all and check at least one matches
+    const links = screen.getAllByLabelText('Download vpat.pdf');
+    const hrefs = links.map((l) => l.getAttribute('href'));
+    expect(hrefs).toContain('https://example.s3.amazonaws.com/presigned/vpat.pdf');
+  });
+
+  it('download links open in a new tab (target=_blank)', async () => {
+    await renderDashboard();
+    // Any vpat.pdf link must have target=_blank
+    const links = screen.getAllByLabelText('Download vpat.pdf');
+    links.forEach((l) => expect(l.getAttribute('target')).toBe('_blank'));
+  });
+});
+
+// ── RequestDetail — review documents section ──────────────────────────────────
+
+describe('RequestDetail — review documents section', () => {
+  const noop = vi.fn();
+
+  it('renders the Review Documents section heading', () => {
+    const req = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
+    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
+    expect(screen.getByText('Review Documents')).toBeInTheDocument();
+  });
+
+  it('shows ATI Docs, ITSO Docs, and Integration Docs row labels', () => {
+    const req = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
+    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
+    expect(screen.getByText('ATI Docs')).toBeInTheDocument();
+    expect(screen.getByText('ITSO Docs')).toBeInTheDocument();
+    expect(screen.getByText('Integration Docs')).toBeInTheDocument();
+  });
+
+  it('shows download links for complete ATI docs in the detail panel', () => {
+    const req = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
+    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
+    // bbb-002 has ATI complete with vpat.pdf and privacy_policy.pdf
+    const links = screen.getAllByLabelText(/Download vpat\.pdf/i);
+    expect(links.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('shows "No documents found" for Integration no_docs in detail panel (bbb-002)', () => {
+    const req = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
+    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
+    expect(screen.getAllByText('No documents found').length).toBeGreaterThan(0);
+  });
+
+  it('shows "Review in progress, gathering documents" for pending type in detail panel', () => {
+    const req = MOCK_REQUESTS.find((r) => r.request_id === 'aaa-001');
+    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
+    const pending = screen.getAllByText('Review in progress, gathering documents');
+    // aaa-001 has all three pending
+    expect(pending.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('shows "No documents found. Contact vendor" for ITSO no_docs (ccc-003)', () => {
+    const req = MOCK_REQUESTS.find((r) => r.request_id === 'ccc-003');
+    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
+    expect(screen.getAllByText('No documents found. Contact vendor').length).toBeGreaterThan(0);
+  });
+
+  it('shows pending state for all three types when review_docs is absent', () => {
+    const req = {
+      ...MOCK_REQUESTS[0],
+      review_docs: undefined,
+    };
+    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
+    const pending = screen.getAllByText('Review in progress, gathering documents');
+    expect(pending.length).toBeGreaterThanOrEqual(3);
+  });
+});

@@ -83,6 +83,72 @@ function emptyRequestor(requestor) {
   return requestor && typeof requestor === "object" ? requestor : {};
 }
 
+// ── Review document cell ──────────────────────────────────────────────────────
+// Renders the appropriate content for an ATI / ITSO / Integration docs column.
+// status: "pending" | "complete" | "no_docs"
+function ReviewDocCell({ reviewSection }) {
+  if (!reviewSection) {
+    return (
+      <span style={{ color: C.stoneLight, fontSize: "11.5px", fontStyle: "italic" }}>
+        Review in progress, gathering documents
+      </span>
+    );
+  }
+
+  const { status, message, files = [] } = reviewSection;
+
+  if (status === "pending") {
+    return (
+      <span style={{ color: C.stoneLight, fontSize: "11.5px", fontStyle: "italic" }}>
+        {message || "Review in progress, gathering documents"}
+      </span>
+    );
+  }
+
+  if (status === "no_docs") {
+    return (
+      <span
+        style={{
+          color: "#B5650B",
+          fontSize: "11.5px",
+          fontStyle: "italic",
+          display: "block",
+        }}
+      >
+        {message}
+      </span>
+    );
+  }
+
+  // status === "complete" — show download links
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "3px" }}>
+      {files.map((f) => (
+        <a
+          key={f.name}
+          href={f.url}
+          download={f.name}
+          target="_blank"
+          rel="noreferrer"
+          aria-label={`Download ${f.name}`}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "4px",
+            fontSize: "11.5px",
+            fontFamily: C.mono,
+            color: C.red,
+            textDecoration: "none",
+            fontWeight: 600,
+          }}
+        >
+          ↓ {f.name}
+        </a>
+      ))}
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function AdminDashboard() {
   const [requests, setRequests] = useState([]);
@@ -266,18 +332,21 @@ export default function AdminDashboard() {
                 <th style={styles.th}>Status</th>
                 <th style={styles.th}>Flags</th>
                 <th style={styles.th}>Risk</th>
+                <th style={styles.th}>ATI Docs</th>
+                <th style={styles.th}>ITSO Docs</th>
+                <th style={styles.th}>Integration Docs</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} style={styles.emptyCell}>
+                  <td colSpan={9} style={styles.emptyCell}>
                     Loading…
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={6} style={styles.emptyCell}>
+                  <td colSpan={9} style={styles.emptyCell}>
                     {error
                       ? "Unable to load requests."
                       : requests.length === 0
@@ -332,6 +401,15 @@ export default function AdminDashboard() {
                         ) : (
                           <span style={{ color: C.stone, fontSize: "12px" }}>Pending</span>
                         )}
+                      </td>
+                      <td style={styles.td} onClick={(e) => e.stopPropagation()}>
+                        <ReviewDocCell reviewSection={r.review_docs?.ati} />
+                      </td>
+                      <td style={styles.td} onClick={(e) => e.stopPropagation()}>
+                        <ReviewDocCell reviewSection={r.review_docs?.itso} />
+                      </td>
+                      <td style={styles.td} onClick={(e) => e.stopPropagation()}>
+                        <ReviewDocCell reviewSection={r.review_docs?.integration} />
                       </td>
                     </tr>
                   );
