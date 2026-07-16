@@ -23,17 +23,22 @@ After saving, sends:
 import os
 import sys
 
-from . import emailer, security_report, store
-
-# Map review flags → document types the LLM should try to locate.
-_FLAG_TO_DOC = {
-    "ati_flag": ("vpat", "VPAT accessibility conformance report"),
-    "security_flag": ("hecvat", "HECVAT security assessment questionnaire"),
-}
+from . import emailer, evidence, security_report, store
 
 
-def _find_missing_docs(record: dict, flags: dict) -> list[str]:
-    """Return human-readable labels of docs the LLM could not find."""
+def _find_missing_doc_types(record: dict, flags: dict) -> list[str]:
+    """Return canonical doc types the LLM could not find among those required
+    by the active flags. Already-uploaded requester evidence is treated as found.
+    """
+    required = evidence.required_doc_types(flags)
+    if not required:
+        return []
+
+    already = evidence.fulfilled_doc_types(record)
+    still_needed = [d for d in required if d not in already]
+    if not still_needed:
+        return []
+
     chatbot_dir = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "..", "chatbot")
     )
@@ -48,19 +53,21 @@ def _find_missing_docs(record: dict, flags: dict) -> list[str]:
         or ""
     ).strip()
     if not vendor:
-        return []
+        return still_needed
 
     missing: list[str] = []
-    for flag_key, (doc_type, label) in _FLAG_TO_DOC.items():
-        if not flags.get(flag_key):
+    for doc_type in still_needed:
+        # integration_document is never publicly searchable in a reliable way.
+        if doc_type == "integration_document":
+            missing.append(doc_type)
             continue
         try:
             result = chatbot_parse.find_document(vendor, doc_type)
             if not result.get("found"):
-                missing.append(label)
+                missing.append(doc_type)
         except Exception as exc:  # noqa: BLE001
             print(f"find_document({vendor!r}, {doc_type}) failed: {exc}")
-            missing.append(label)
+            missing.append(doc_type)
     return missing
 
 
@@ -91,7 +98,10 @@ def handler(event, context=None):
     record["updated_at"] = store.now_iso()
     if flags.get("security_flag"):
         record["security_review"] = {"status": "pending"}
+    if flags.get("ati_flag"):
+        record.setdefault("ati_review", {"status": "pending"})
     record.setdefault("notifications", {})
+    record.setdefault("requester_documents", {})
 
     store.save_request(record)
 
@@ -104,8 +114,10 @@ def handler(event, context=None):
 
     # Email 3 — missing required documents for flagged reviews
     try:
-        missing = _find_missing_docs(record, flags)
-        if missing and emailer.send_missing_docs_email(record, missing):
+        missing_types = _find_missing_doc_types(record, flags)
+        if missing_types and emailer.send_missing_docs_email(
+            record, missing_doc_types=missing_types
+        ):
             store.save_request(record)
     except Exception as exc:  # noqa: BLE001
         print(f"Missing-docs email failed for {request_id}: {exc}")

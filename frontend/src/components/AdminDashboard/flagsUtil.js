@@ -17,8 +17,7 @@ export function effectiveFlags(flags, admin) {
     ati: effective("ati_flag"),
     security: effective("security_flag"),
     integration: effective("integration_flag"),
-    // AI/ADS (California AB 302 tracking). No override or completion keys
-    // exist server-side yet, so overridden/completed stay false for now.
+    // AI/ADS is overrideable but remains tracking-only, with no completion key.
     ai: effective("ai_flag"),
   };
 }

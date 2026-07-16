@@ -19,6 +19,8 @@ from . import store
 
 AWS_REGION = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-west-2"
 SOURCE_EMAIL = os.environ.get("SES_SOURCE_EMAIL", "")
+# Snapshotted at import for callers that flip the flag in tests; _send_email also
+# re-reads the env so a pytest conftest force-disable always wins.
 EMAILS_DISABLED = os.environ.get("EMAILS_DISABLED", "true").lower() == "true"
 FRONTEND_BASE_URL = (
     os.environ.get("FRONTEND_BASE_URL") or "http://localhost:5173"
@@ -28,12 +30,16 @@ FRONTEND_BASE_URL = (
 # ── low-level send ────────────────────────────────────────────────────────────
 
 
+def _emails_disabled() -> bool:
+    return os.environ.get("EMAILS_DISABLED", "true").lower() == "true" or EMAILS_DISABLED
+
+
 def _send_email(to_email: str, subject: str, body: str):
     if not to_email:
         print("Email skipped: missing recipient email.")
         return False
 
-    if EMAILS_DISABLED:
+    if _emails_disabled():
         print("\n===== EMAIL WOULD BE SENT =====")
         print("To:", to_email)
         print("Subject:", subject)
@@ -41,12 +47,13 @@ def _send_email(to_email: str, subject: str, body: str):
         print("===== END EMAIL =====\n")
         return True
 
-    if not SOURCE_EMAIL:
+    source = os.environ.get("SES_SOURCE_EMAIL", "") or SOURCE_EMAIL
+    if not source:
         raise RuntimeError("Missing SES_SOURCE_EMAIL environment variable.")
 
     ses = boto3.client("ses", region_name=AWS_REGION)
     ses.send_email(
-        Source=SOURCE_EMAIL,
+        Source=source,
         Destination={"ToAddresses": [to_email]},
         Message={
             "Subject": {"Data": subject, "Charset": "UTF-8"},
@@ -70,7 +77,7 @@ def tracking_link(request_id: str) -> str:
 
 
 def upload_link(request_id: str) -> str:
-    """Placeholder until a real upload page exists."""
+    """Requester evidence upload page."""
     return f"{FRONTEND_BASE_URL}/upload/{request_id}"
 
 
@@ -173,19 +180,47 @@ send_ticket_received_email = send_application_received_email
 # ── Email 3: missing required documents ───────────────────────────────────────
 
 
-def send_missing_docs_email(record: dict, missing_docs: list[str]) -> bool:
-    """Ask the requester to upload documents the LLM could not find."""
-    if already_sent(record, "missing_docs_sent_at"):
+def send_missing_docs_email(
+    record: dict,
+    missing_docs: list[str] | None = None,
+    *,
+    missing_doc_types: list[str] | None = None,
+) -> bool:
+    """Ask the requester to upload documents the LLM could not find.
+
+    Idempotency is based on the canonical missing_doc_types set: the same set
+    is not emailed twice, but a newly-required document can trigger a fresh
+    email even if an earlier missing-docs notice was already sent.
+    """
+    from . import evidence  # local import avoids a circular import at module load
+
+    if missing_doc_types is None:
+        # Back-compat: older callers pass human-readable labels only.
+        if not missing_docs:
+            return False
+        missing_doc_types = []
+        labels = list(missing_docs)
+    else:
+        missing_doc_types = list(missing_doc_types)
+        labels = [evidence.label_for(d) for d in missing_doc_types]
+
+    if not missing_doc_types and not labels:
         return False
-    if not missing_docs:
+
+    notes = _notifications(record)
+    emailed = set(notes.get("missing_doc_types_emailed") or [])
+    current = set(missing_doc_types or [])
+    # Skip only when every currently-missing type was already covered by a
+    # prior email. A newly required type can still trigger another notice.
+    if notes.get("missing_docs_sent_at") and current and current <= emailed:
         return False
 
     name, to_email, software_name, request_id = _requestor_bits(record)
-    docs_list = "\n".join(f"  - {doc}" for doc in missing_docs)
+    docs_list = "\n".join(f"  - {doc}" for doc in labels)
     subject = f"Action needed: upload documents for {software_name}"
     body = f"""Hi {name},
 
-We could not automatically locate one or more required review documents for your software request. Please upload them using the link below.
+We could not automatically locate one or more required review documents for your software request. Please upload them (file or public web link) using the page below.
 
 Procurement ID: {request_id}
 Software: {software_name}
@@ -202,7 +237,10 @@ Software Request Assistant
     sent = _send_email(to_email, subject, body)
     if sent:
         mark_sent(record, "missing_docs_sent_at")
-        _notifications(record)["missing_docs"] = list(missing_docs)
+        notes["missing_docs"] = labels
+        notes["missing_doc_types"] = list(missing_doc_types)
+        # Accumulate so a later smaller subset still counts as already emailed.
+        notes["missing_doc_types_emailed"] = sorted(emailed | current)
     return sent
 
 

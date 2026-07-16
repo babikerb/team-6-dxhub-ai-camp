@@ -10,19 +10,31 @@ an automated verdict today (security_report_generator.py); ATI and
 Integration reviews aren't built yet, so their review_verdict.json is simply
 not written until those pipelines exist -- nothing here fabricates one.
 
+Also provides read helpers so ATI/ITSO generators can consume requester-
+uploaded evidence already sitting in the bucket (not just public URLs).
+
 Uploads are best-effort: a failure must never break report generation, so
 every call here is wrapped by the caller in a broad try/except (see
 security_report_generator.generate_report()).
 """
 
+import io
 import json
 import os
+import re
 
 _BUCKET = os.environ.get(
-    "DATA_BUCKET", "dxhub-camp-2026-sdsu-software-request-and-institutional-c7fe61"
+    "DATA_BUCKET",
+    os.environ.get(
+        "REVIEW_DOCS_BUCKET",
+        "dxhub-camp-2026-sdsu-software-request-and-institutional-c7fe61",
+    ),
 )
 _REGION = os.environ.get("AWS_REGION", "us-west-2")
 _s3 = None
+_MAX_READ_BYTES = 5_000_000
+_MAX_TEXT_CHARS = 12000
+_MAX_PDF_PAGES = 40
 
 DOC_TYPE_TO_FOLDER = {
     "privacy_policy": "ATI",
@@ -30,6 +42,7 @@ DOC_TYPE_TO_FOLDER = {
     "hecvat": "ITSO",
     "soc2": "ITSO",
     "terms_of_service": "ITSO",
+    "integration_document": "Integration",
 }
 
 _EXTENSION_BY_CONTENT_TYPE = {
@@ -90,3 +103,78 @@ def upload_review_verdict(request_id: str, review_folder: str, verdict: dict) ->
         ContentType="application/json",
     )
     return key
+
+
+def _bytes_to_text(raw_bytes: bytes, content_type: str | None) -> str:
+    ct = (content_type or "").lower()
+    if "pdf" in ct or (not ct and raw_bytes[:4] == b"%PDF"):
+        try:
+            from pypdf import PdfReader
+
+            reader = PdfReader(io.BytesIO(raw_bytes))
+            pages = [(p.extract_text() or "") for p in reader.pages[:_MAX_PDF_PAGES]]
+            return re.sub(r"\s+", " ", " ".join(pages)).strip()[:_MAX_TEXT_CHARS]
+        except Exception:  # noqa: BLE001
+            return ""
+    try:
+        decoded = raw_bytes.decode("utf-8", errors="ignore")
+    except Exception:  # noqa: BLE001
+        return ""
+    if "html" in ct:
+        text = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", decoded)
+        text = re.sub(r"(?s)<[^>]+>", " ", text)
+        return re.sub(r"\s+", " ", text).strip()[:_MAX_TEXT_CHARS]
+    return re.sub(r"\s+", " ", decoded).strip()[:_MAX_TEXT_CHARS]
+
+
+def read_object(key: str) -> dict | None:
+    """Read one S3 object and return {key, raw_bytes, content_type, text} or None."""
+    if not key or not _BUCKET:
+        return None
+    try:
+        resp = _get_s3().get_object(Bucket=_BUCKET, Key=key)
+        raw = resp["Body"].read(_MAX_READ_BYTES + 1)
+        if len(raw) > _MAX_READ_BYTES:
+            raw = raw[:_MAX_READ_BYTES]
+        content_type = resp.get("ContentType") or "application/octet-stream"
+        return {
+            "key": key,
+            "raw_bytes": raw,
+            "content_type": content_type,
+            "text": _bytes_to_text(raw, content_type),
+            "size_bytes": len(raw),
+        }
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def load_requester_evidence(record: dict, doc_types: list[str] | None = None) -> dict[str, dict]:
+    """Load requester-uploaded evidence from DynamoDB metadata + S3.
+
+    Returns {doc_type: {url/s3_key, source, text, fetched, raw_bytes, content_type}}.
+    """
+    docs = record.get("requester_documents") or {}
+    if not isinstance(docs, dict):
+        return {}
+
+    wanted = set(doc_types) if doc_types else set(docs)
+    out: dict[str, dict] = {}
+    for doc_type, entry in docs.items():
+        if doc_type not in wanted or not isinstance(entry, dict):
+            continue
+        key = entry.get("s3_key")
+        if not key:
+            continue
+        loaded = read_object(key)
+        out[doc_type] = {
+            "doc_type": doc_type,
+            "url": entry.get("source_url") or f"s3://{_BUCKET}/{key}",
+            "s3_key": key,
+            "source": entry.get("source") or "requester_upload",
+            "filename": entry.get("filename"),
+            "fetched": bool(loaded and loaded.get("text")),
+            "text": (loaded or {}).get("text") or None,
+            "raw_bytes": (loaded or {}).get("raw_bytes"),
+            "content_type": (loaded or {}).get("content_type") or entry.get("content_type"),
+        }
+    return out

@@ -22,6 +22,7 @@ const DEFAULT_OVERRIDES = {
   ati_flag: null,
   security_flag: null,
   integration_flag: null,
+  ai_flag: null,
 };
 
 const DEFAULT_COMPLETIONS = {
@@ -76,9 +77,11 @@ function FlagRow({
   onToggle,
   completed,
   onToggleCompleted,
+  reviewable = true,
 }) {
   const effective = overrideValue !== null ? overrideValue : computedValue;
   const isOverridden = overrideValue !== null;
+  const testIdLabel = label.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
   return (
     <div style={styles.flagRow}>
@@ -119,37 +122,43 @@ function FlagRow({
           </span>
         </div>
 
-        {/* Review completion — only meaningful while the review actually applies */}
+        {/* Review completion — AI/ADS is an inventory marker, not a review queue. */}
         <div style={styles.flagCell}>
           <div style={styles.flagCellLabel}>Review</div>
-          <button
-            data-testid={`complete-${label.replace(/\s+/g, '-').toLowerCase()}`}
-            type="button"
-            disabled={!effective}
-            title={
-              !effective
-                ? "This review does not apply (flag is clear)"
-                : completed
-                ? "Click to mark this review as still remaining"
-                : "Click to mark this review as completed"
-            }
-            style={{
-              ...styles.completeButton,
-              background: effective && completed ? "#2E7D32" : C.white,
-              color: effective && completed ? C.white : C.ink,
-              border: effective && completed ? "none" : `1.5px solid ${C.line}`,
-              opacity: effective ? 1 : 0.45,
-              cursor: effective ? "pointer" : "not-allowed",
-            }}
-            onClick={() => onToggleCompleted(flagKey)}
-          >
-            {completed ? "Completed ✓" : "Remaining"}
-          </button>
+          {reviewable ? (
+            <button
+              data-testid={`complete-${testIdLabel}`}
+              type="button"
+              disabled={!effective}
+              title={
+                !effective
+                  ? "This review does not apply (flag is clear)"
+                  : completed
+                  ? "Click to mark this review as still remaining"
+                  : "Click to mark this review as completed"
+              }
+              style={{
+                ...styles.completeButton,
+                background: effective && completed ? "#2E7D32" : C.white,
+                color: effective && completed ? C.white : C.ink,
+                border: effective && completed ? "none" : `1.5px solid ${C.line}`,
+                opacity: effective ? 1 : 0.45,
+                cursor: effective ? "pointer" : "not-allowed",
+              }}
+              onClick={() => onToggleCompleted(flagKey)}
+            >
+              {completed ? "Completed ✓" : "Remaining"}
+            </button>
+          ) : (
+            <span style={{ ...styles.completeButton, color: C.stone, border: `1.5px solid ${C.line}` }}>
+              Tracking only
+            </span>
+          )}
         </div>
 
         {/* Toggle button */}
         <button
-          data-testid={`toggle-${label.replace(/\s+/g, '-').toLowerCase()}`}
+          data-testid={`toggle-${testIdLabel}`}
           style={{
             ...styles.toggleButton,
             background: overrideValue === true ? C.red : overrideValue === false ? C.stone : C.white,
@@ -477,7 +486,8 @@ export default function RequestDetail({ request, onClose, onSaved, onRefreshed }
   const hasOverride =
     overrides.ati_flag !== null ||
     overrides.security_flag !== null ||
-    overrides.integration_flag !== null;
+    overrides.integration_flag !== null ||
+    overrides.ai_flag !== null;
 
   // Cycle override for a flag: null → true → false → null
   function handleToggle(key) {
@@ -670,6 +680,15 @@ export default function RequestDetail({ request, onClose, onSaved, onRefreshed }
               onToggle={handleToggle}
               completed={completions.integration_flag}
               onToggleCompleted={handleToggleCompleted}
+            />
+            <FlagRow
+              flagKey="ai_flag"
+              label="AI / ADS"
+              computedValue={flags.ai_flag === true}
+              computedReason={flags.ai_flag_reason || "Not computed yet"}
+              overrideValue={overrides.ai_flag}
+              onToggle={handleToggle}
+              reviewable={false}
             />
           </Section>
 

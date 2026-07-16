@@ -194,3 +194,52 @@ export async function uploadReviewDoc(requestId, reviewType, file, kind = "docum
     body: JSON.stringify({ review_type: reviewType, filename, kind }),
   });
 }
+
+/** GET /requests/{id}/requester-docs/context — limited upload-page payload. */
+export async function getRequesterDocsContext(requestId) {
+  return request(`/requests/${encodeURIComponent(requestId)}/requester-docs/context`);
+}
+
+/**
+ * Upload requester evidence (file) for a canonical doc_type.
+ * Same presign → PUT → confirm sequence as admin uploads, but scoped to
+ * evidence documents only (never final reports).
+ */
+export async function uploadRequesterDoc(requestId, docType, file) {
+  const contentType = file.type || "application/octet-stream";
+  const { upload_url, filename } = await request(
+    `/requests/${encodeURIComponent(requestId)}/requester-docs/upload-url`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        doc_type: docType,
+        filename: file.name,
+        content_type: contentType,
+      }),
+    }
+  );
+
+  const put = await fetch(upload_url, {
+    method: "PUT",
+    headers: { "Content-Type": contentType },
+    body: file,
+  });
+  if (!put.ok) throw new Error(`Upload to S3 failed (${put.status})`);
+
+  return request(`/requests/${encodeURIComponent(requestId)}/requester-docs/confirm`, {
+    method: "POST",
+    body: JSON.stringify({
+      doc_type: docType,
+      filename,
+      content_type: contentType,
+    }),
+  });
+}
+
+/** POST /requests/{id}/requester-docs/link — archive a public web link. */
+export async function submitRequesterDocLink(requestId, docType, url) {
+  return request(`/requests/${encodeURIComponent(requestId)}/requester-docs/link`, {
+    method: "POST",
+    body: JSON.stringify({ doc_type: docType, url }),
+  });
+}

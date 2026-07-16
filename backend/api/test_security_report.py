@@ -97,7 +97,30 @@ def test_soc2_only_included_when_attached():
     assert any(d["doc_type"] == "soc2" and d["url"] == "https://vendor.example.com/soc2.pdf" for d in docs)
 
 
-# ---- Auto-search priority: attached > requester_provided > auto_search > not_found ----
+def test_requester_upload_takes_priority_over_admin_attached(monkeypatch):
+    monkeypatch.setattr(
+        srg.s3_documents,
+        "load_requester_evidence",
+        lambda record, doc_types=None: {
+            "hecvat": {
+                "url": "s3://bucket/DataStored/x/ITSO/hecvat_uploaded.pdf",
+                "source": "requester_upload",
+                "text": "HECVAT CONTENTS",
+                "raw_bytes": b"pdf",
+                "content_type": "application/pdf",
+            }
+        },
+    )
+    record = _record()
+    record["admin"] = {"attached_documents": {"hecvat": "https://vendor.example.com/hecvat.pdf"}}
+    docs = srg._gather_documents(record)
+    hecvat = next(d for d in docs if d["doc_type"] == "hecvat")
+    assert hecvat["source"] == "requester_upload"
+    assert hecvat["fetched"] is True
+    assert "uploaded" in hecvat["url"]
+
+
+# ---- Auto-search priority: upload > attached > requester_provided > auto_search ----
 # These run with MODE forced off "mock" (via monkeypatch) so the auto-search branch
 # actually executes, but find_document/_fetch_url are stubbed -- no real network.
 

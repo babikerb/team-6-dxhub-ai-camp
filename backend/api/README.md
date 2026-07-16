@@ -92,6 +92,55 @@ curl -X PATCH http://localhost:8000/requests/<request_id>/admin \
   }'
 ```
 
+## Requester evidence upload
+
+Missing-document emails link to `/upload/<request_id>`. That page talks to:
+
+| Endpoint | Method |
+| --- | --- |
+| `/requests/{id}/requester-docs/context` | GET |
+| `/requests/{id}/requester-docs/upload-url` | POST |
+| `/requests/{id}/requester-docs/confirm` | POST |
+| `/requests/{id}/requester-docs/link` | POST |
+
+Files are browser-PUTed straight to S3 under
+`DataStored/<request_id>/<ATI|ITSO|Integration>/<doc_type>_...`.
+Web links are fetched server-side (SSRF-safe) and archived the same way.
+Confirm/link then regenerate the ATI or ITSO draft so the LLM re-reads the
+new evidence.
+
+### S3 CORS (required for browser PUTs)
+
+The pre-existing review-docs bucket needs CORS allowing PUT from the frontend
+origin. Apply once after deploy (adjust AllowedOrigins for Amplify):
+
+```bash
+cat > /tmp/review-docs-cors.json <<'EOF'
+{
+  "CORSRules": [
+    {
+      "AllowedOrigins": ["http://localhost:5173", "https://*"],
+      "AllowedMethods": ["GET", "PUT", "HEAD"],
+      "AllowedHeaders": ["*"],
+      "ExposeHeaders": ["ETag"],
+      "MaxAgeSeconds": 3000
+    }
+  ]
+}
+EOF
+aws s3api put-bucket-cors \
+  --bucket dxhub-camp-2026-sdsu-software-request-and-institutional-c7fe61 \
+  --cors-configuration file:///tmp/review-docs-cors.json \
+  --region us-west-2
+```
+
+### S3 event notification (required for auto-indexing)
+
+SAM cannot attach notifications to a pre-existing bucket. After deploy, wire
+`S3EventFunction` to `s3:ObjectCreated:*` on prefix `DataStored/` (see
+`Outputs.S3EventFunctionArn`). Confirm endpoints also re-list S3, so local
+dev works without the trigger.
+
 ## Current status
 
 - Storage: **real DynamoDB** (`handlers/store.py`, table `SoftwareRequests`
@@ -99,13 +148,12 @@ curl -X PATCH http://localhost:8000/requests/<request_id>/admin \
   `Decimal` automatically -- handlers just deal with plain dicts.
 - Frontend wiring: Intake form `POST /requests`, chatbot
   `PATCH /requests/{id}/chatbot`, admin dashboard `GET /requests` +
-  `PATCH /requests/{id}/admin`. Point the UI at this API with
-  `VITE_API_BASE_URL` (no trailing slash).
+  `PATCH /requests/{id}/admin`, requester upload `/upload/:id`. Point the UI
+  at this API with `VITE_API_BASE_URL` (no trailing slash).
 - Flags: computed by a **temporary stub** (`store._stub_compute_flags`)
   implementing the logic from `Chatbot_Questions_and_Flags.md` Part C.
   ATI scope is read from `requestor.scope_of_usage` (not duplicated on
   `it_review`). Swap for `from rules_engine.rules_engine import compute_flags`
   once Person 4 delivers `backend/rules_engine/` -- same input/output shape.
-- Deployment: `template.yaml` is a ready-to-go AWS SAM template for all 5
-  endpoints as real Lambdas behind API Gateway. Not deployed yet -- ask
-  before running `sam deploy`, since it creates real billed AWS resources.
+- Deployment: `template.yaml` is a ready-to-go AWS SAM template. Ask before
+  running `sam deploy`, since it creates real billed AWS resources.

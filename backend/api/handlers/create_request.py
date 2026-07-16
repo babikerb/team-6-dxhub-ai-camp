@@ -48,6 +48,7 @@ def handler(event, context=None):
                 "ati_flag": None,
                 "security_flag": None,
                 "integration_flag": None,
+                "ai_flag": None,
             },
             "review_completions": {
                 "ati_flag": False,

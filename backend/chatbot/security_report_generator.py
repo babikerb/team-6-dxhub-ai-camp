@@ -31,6 +31,7 @@ REGION = os.environ.get("AWS_REGION", "us-west-2")
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 import parse as chatbot_parse  # noqa: E402  -- reuse web search / find_document / domain guard
+import s3_documents  # noqa: E402  -- requester-uploaded evidence in the bucket
 
 # it_review fields the chatbot already collected these documents into.
 DOC_TYPES_FROM_IT_REVIEW = {
@@ -126,14 +127,14 @@ def _gather_documents(record: dict) -> list[dict]:
     worse than none; Security can still attach one manually.
 
     Priority per document (each stops at the first that resolves):
-      1. admin_attached      -- a reviewer pasted a link (PATCH .../admin).
-                                 Always wins: it's a deliberate correction.
-      2. requester_provided  -- the requester supplied it in the chatbot
+      1. requester_upload / requester_link -- archived in S3 via the upload page.
+      2. admin_attached      -- a reviewer pasted a link (PATCH .../admin).
+      3. requester_provided  -- the requester supplied it in the chatbot
                                  (privacy_policy / terms_of_service / vpat only
                                  -- HECVAT is never asked of the requester).
-      3. auto_search         -- find_document() searches the web and
+      4. auto_search         -- find_document() searches the web and
                                  domain-validates the best public hit.
-      4. not_found           -- none of the above resolved anything.
+      5. not_found           -- none of the above resolved anything.
 
     `source` is returned per-document so the dashboard can show reviewers
     exactly where each link came from, not just whether one exists.
@@ -142,10 +143,24 @@ def _gather_documents(record: dict) -> list[dict]:
     requestor = record.get("requestor") or {}
     attached = (record.get("admin") or {}).get("attached_documents") or {}
     software_name = requestor.get("software_name") or ""
+    uploaded = s3_documents.load_requester_evidence(
+        record, AUTO_SEARCHABLE_DOC_TYPES + ["soc2"]
+    )
     docs = []
     is_mock = (MODE or "").lower() == "mock"
 
-    def add_doc(doc_type: str, url: str | None, source: str):
+    def add_doc(doc_type: str, url: str | None, source: str, prefetched: dict | None = None):
+        if prefetched is not None:
+            docs.append({
+                "doc_type": doc_type,
+                "url": prefetched.get("url") or url,
+                "source": source,
+                "fetched": bool(prefetched.get("text") or prefetched.get("raw_bytes")),
+                "text": prefetched.get("text"),
+                "raw_bytes": prefetched.get("raw_bytes"),
+                "content_type": prefetched.get("content_type"),
+            })
+            return
         fetched = _fetch_url(url) if (url and not is_mock) else None
         docs.append({
             "doc_type": doc_type,
@@ -158,6 +173,11 @@ def _gather_documents(record: dict) -> list[dict]:
         })
 
     for doc_type in AUTO_SEARCHABLE_DOC_TYPES:
+        uploaded_doc = uploaded.get(doc_type)
+        if uploaded_doc:
+            add_doc(doc_type, uploaded_doc.get("url"), uploaded_doc.get("source") or "requester_upload", uploaded_doc)
+            continue
+
         url = _url_or_none(attached.get(doc_type))
         if url:
             add_doc(doc_type, url, "admin_attached")
@@ -179,10 +199,13 @@ def _gather_documents(record: dict) -> list[dict]:
                 url = None
         add_doc(doc_type, url, "auto_search" if url else "not_found")
 
-    # SOC 2 is never auto-searched -- only included if a reviewer attached one.
-    soc2_url = _url_or_none(attached.get("soc2"))
-    if soc2_url:
-        add_doc("soc2", soc2_url, "admin_attached")
+    # SOC 2 is never auto-searched -- only included if uploaded or admin-attached.
+    if uploaded.get("soc2"):
+        add_doc("soc2", uploaded["soc2"].get("url"), uploaded["soc2"].get("source") or "requester_upload", uploaded["soc2"])
+    else:
+        soc2_url = _url_or_none(attached.get("soc2"))
+        if soc2_url:
+            add_doc("soc2", soc2_url, "admin_attached")
 
     return docs
 

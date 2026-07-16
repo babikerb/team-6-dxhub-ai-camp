@@ -240,6 +240,8 @@ export default function ReviewDashboard() {
     setError("");
     try {
       setRecord(await cfg.findDocs(requestId));
+      const dd = await getReviewDocs(requestId);
+      setDocs((dd.review_docs || {})[reviewType] || {});
     } catch (e) {
       setError(e.message || "Could not retrieve documents.");
     } finally {
@@ -257,7 +259,11 @@ export default function ReviewDashboard() {
       // VPAT. Poll rather than expecting the POST to carry the result.
       for (let i = 0; i < 80; i++) {
         await new Promise((r) => setTimeout(r, 3000));
-        const fresh = await getRequest(requestId);
+        const [fresh, dd] = await Promise.all([
+          getRequest(requestId),
+          getReviewDocs(requestId),
+        ]);
+        setDocs((dd.review_docs || {})[reviewType] || {});
         const st = (fresh[cfg.reportKey] || {}).status;
         if (st === "complete" || st === "failed") {
           setRecord(fresh);
@@ -266,6 +272,7 @@ export default function ReviewDashboard() {
           }
           return;
         }
+        setRecord(fresh);
       }
       setError("Still running. Reload this page to check.");
     } catch (e) {
@@ -345,7 +352,12 @@ export default function ReviewDashboard() {
                     ↓ Download {f.name}
                   </a>
                 ) : (
-                  <div style={styles.missing}>Not in the bucket</div>
+                  <div style={styles.missing}>
+                    {(docs && docs.message) ||
+                      (docs && docs.status === "pending"
+                        ? "Review in progress — gathering documents"
+                        : "Not in the bucket")}
+                  </div>
                 )}
                 <UploadButton
                   label={f ? "Replace file" : "Upload file"}

@@ -330,11 +330,19 @@ Resources:
             BucketName: !Ref DataBucketName
         - Statement:
             - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:ListBucket
+              Resource:
+                - !Sub "arn:aws:s3:::${DataBucketName}"
+                - !Sub "arn:aws:s3:::${DataBucketName}/DataStored/*"
+            - Effect: Allow
               Action: bedrock:InvokeModel
               Resource: "*"
       Environment:
         Variables:
           DATA_BUCKET: !Ref DataBucketName
+          REVIEW_DOCS_BUCKET: !Ref ReviewDocsBucketName
 
   # ── Review Documents: S3 event Lambda ────────────────────────────────────────
   # Trigger is wired manually after deploy (see deploy instructions) because
@@ -459,8 +467,21 @@ Resources:
             TableName: !Ref SoftwareRequestsTableName
         - Statement:
             - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:ListBucket
+              Resource:
+                - !Sub "arn:aws:s3:::${DataBucketName}"
+                - !Sub "arn:aws:s3:::${DataBucketName}/DataStored/*"
+                - !Sub "arn:aws:s3:::${ReviewDocsBucketName}"
+                - !Sub "arn:aws:s3:::${ReviewDocsBucketName}/DataStored/*"
+            - Effect: Allow
               Action: bedrock:InvokeModel
               Resource: "*"
+      Environment:
+        Variables:
+          DATA_BUCKET: !Ref DataBucketName
+          REVIEW_DOCS_BUCKET: !Ref ReviewDocsBucketName
 
   # ── Reviewer document upload: presigned PUT + confirm ───────────────────────
   # The browser PUTs straight to S3, so the bytes never cross API Gateway (10MB
@@ -511,6 +532,115 @@ Resources:
           Properties:
             RestApiId: !Ref SoftwareRequestsApi
             Path: /requests/{id}/review-docs/confirm
+            Method: POST
+
+  # ── Requester evidence upload (email /upload/:id page) ──────────────────────
+  # Request-id scoped. No final_report kind. Confirm/link invoke ATI/ITSO workers
+  # so freshly uploaded evidence is consumed by the draft generators.
+  RequesterDocsContextFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ..
+      Handler: api.handlers.requester_docs.context_handler
+      Timeout: 10
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref SoftwareRequestsTableName
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SoftwareRequestsApi
+            Path: /requests/{id}/requester-docs/context
+            Method: GET
+
+  RequesterDocsUploadUrlFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ..
+      Handler: api.handlers.requester_docs.upload_url_handler
+      Timeout: 10
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref SoftwareRequestsTableName
+        - Statement:
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub "arn:aws:s3:::${ReviewDocsBucketName}/DataStored/*"
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SoftwareRequestsApi
+            Path: /requests/{id}/requester-docs/upload-url
+            Method: POST
+
+  RequesterDocsConfirmFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ..
+      Handler: api.handlers.requester_docs.confirm_handler
+      Timeout: 29
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SoftwareRequestsTableName
+        - LambdaInvokePolicy:
+            FunctionName: !Ref SecurityReportWorkerFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref AtiReportWorkerFunction
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:HeadObject
+                - s3:ListBucket
+              Resource:
+                - !Sub "arn:aws:s3:::${ReviewDocsBucketName}"
+                - !Sub "arn:aws:s3:::${ReviewDocsBucketName}/DataStored/*"
+      Environment:
+        Variables:
+          SECURITY_REPORT_WORKER_FUNCTION_NAME: !Ref SecurityReportWorkerFunction
+          ATI_REPORT_WORKER_FUNCTION_NAME: !Ref AtiReportWorkerFunction
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SoftwareRequestsApi
+            Path: /requests/{id}/requester-docs/confirm
+            Method: POST
+
+  RequesterDocsLinkFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ..
+      Handler: api.handlers.requester_docs.link_handler
+      Timeout: 29
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SoftwareRequestsTableName
+        - LambdaInvokePolicy:
+            FunctionName: !Ref SecurityReportWorkerFunction
+        - LambdaInvokePolicy:
+            FunctionName: !Ref AtiReportWorkerFunction
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:PutObject
+                - s3:GetObject
+                - s3:ListBucket
+              Resource:
+                - !Sub "arn:aws:s3:::${ReviewDocsBucketName}"
+                - !Sub "arn:aws:s3:::${ReviewDocsBucketName}/DataStored/*"
+      Environment:
+        Variables:
+          SECURITY_REPORT_WORKER_FUNCTION_NAME: !Ref SecurityReportWorkerFunction
+          ATI_REPORT_WORKER_FUNCTION_NAME: !Ref AtiReportWorkerFunction
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SoftwareRequestsApi
+            Path: /requests/{id}/requester-docs/link
             Method: POST
 
 Outputs:

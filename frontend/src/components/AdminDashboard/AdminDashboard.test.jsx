@@ -281,9 +281,18 @@ describe('RequestDetail — flag display', () => {
       <RequestDetail request={highRiskRequest} onClose={noop} onSaved={noop} />
     );
     const computedLabels = screen.getAllByText('Computed');
-    expect(computedLabels.length).toBe(3);
+    expect(computedLabels.length).toBe(4);
     const overrideLabels = screen.getAllByText('Override');
-    expect(overrideLabels.length).toBe(6);
+    expect(overrideLabels.length).toBe(8);
+  });
+
+  it('shows AI / ADS as an overrideable tracking flag', () => {
+    render(
+      <RequestDetail request={highRiskRequest} onClose={noop} onSaved={noop} />
+    );
+    expect(screen.getByText('AI / ADS')).toBeInTheDocument();
+    expect(screen.getByText('Tracking only')).toBeInTheDocument();
+    expect(screen.getByTestId('toggle-ai-ads')).toBeInTheDocument();
   });
 });
 

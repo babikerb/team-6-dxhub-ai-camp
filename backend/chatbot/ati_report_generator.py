@@ -51,6 +51,7 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 import parse as chatbot_parse  # noqa: E402  -- web search / find_document / domain guard
 import precedent  # noqa: E402  -- RC step 5 lookup
+import s3_documents  # noqa: E402  -- requester-uploaded evidence in the bucket
 
 # The reviewer pulls the correct VPAT by hand when a vendor publishes several
 # (Infrastructure had 9), so we hand off the accessibility PAGE rather than
@@ -125,16 +126,33 @@ def _is_renewal(record):
 def retrieve_documents(record):
     """Step 1 -- find the vendor documents this review needs.
 
-    Returns {documents: {type: {url, source, note}}, software, is_renewal}.
+    Priority per document:
+      1. requester_upload / requester_link already archived in S3
+      2. requester-provided URL from the chatbot intake
+      3. public web search / accessibility-page handoff
+
+    Returns {documents: {type: {url, source, note, s3_key?}}, software, is_renewal}.
     Never raises on a single document failing: a missing VPAT is a normal,
     reportable outcome, not an error.
     """
     software = _software_name(record)
     vendor_website = ((record.get("requestor") or {}).get("vendor_website") or "").strip()
     it_review = record.get("it_review") or {}
+    uploaded = s3_documents.load_requester_evidence(record, ATI_DOC_TYPES)
 
     documents = {}
     for doc_type in ATI_DOC_TYPES:
+        uploaded_doc = uploaded.get(doc_type)
+        if uploaded_doc:
+            documents[doc_type] = {
+                "url": uploaded_doc.get("url"),
+                "source": uploaded_doc.get("source") or "requester_upload",
+                "note": "Provided by the requester via the upload page.",
+                "s3_key": uploaded_doc.get("s3_key"),
+                "text": uploaded_doc.get("text"),
+            }
+            continue
+
         known = (it_review.get(DOC_TYPES_FROM_IT_REVIEW.get(doc_type, "")) or "").strip()
         if known:
             documents[doc_type] = {
@@ -282,11 +300,20 @@ def _format_documents(docs, texts):
 
 
 def fetch_document_texts(documents):
-    """Retrieve the contents of each located document. Missing text is normal
-    (paywalls, JS-only pages, unreachable hosts) and is reported as such."""
+    """Retrieve the contents of each located document. Prefer already-loaded
+    S3 text (requester uploads); otherwise fetch the public URL. Missing text
+    is normal (paywalls, JS-only pages, unreachable hosts)."""
     texts = {}
     for doc_type, info in (documents or {}).items():
-        if info.get("url"):
+        if info.get("text"):
+            texts[doc_type] = info["text"]
+            continue
+        if info.get("s3_key"):
+            loaded = s3_documents.read_object(info["s3_key"])
+            if loaded and loaded.get("text"):
+                texts[doc_type] = loaded["text"]
+                continue
+        if info.get("url") and not str(info["url"]).startswith("s3://"):
             text = _fetch_text(info["url"])
             if text:
                 texts[doc_type] = text

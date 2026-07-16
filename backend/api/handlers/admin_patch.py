@@ -2,7 +2,7 @@
 
 Body shape:
 {
-  "overrides": {"ati_flag": bool|null, "security_flag": bool|null, "integration_flag": bool|null},
+  "overrides": {"ati_flag": bool|null, "security_flag": bool|null, "integration_flag": bool|null, "ai_flag": bool|null},
   "review_completions": {"ati_flag": bool, "security_flag": bool, "integration_flag": bool},  # optional
   "override_reason": "string",
   "overridden_by": "string",
@@ -23,7 +23,8 @@ report next generates -- see security_report_generator._gather_documents().
 from . import emailer, store
 
 ATTACHABLE_DOC_TYPES = {"privacy_policy", "terms_of_service", "vpat", "hecvat", "soc2"}
-FLAG_KEYS = ("ati_flag", "security_flag", "integration_flag")
+OVERRIDABLE_FLAG_KEYS = ("ati_flag", "security_flag", "integration_flag", "ai_flag")
+REVIEW_FLAG_KEYS = ("ati_flag", "security_flag", "integration_flag")
 
 
 def handler(event, context=None):
@@ -40,26 +41,36 @@ def handler(event, context=None):
 
     # Records written before these fields existed must still be patchable.
     admin = record.setdefault("admin", {})
-    admin.setdefault("overrides", {key: None for key in FLAG_KEYS})
-    admin.setdefault("review_completions", {key: False for key in FLAG_KEYS})
+    overrides_state = admin.setdefault("overrides", {})
+    for key in OVERRIDABLE_FLAG_KEYS:
+        overrides_state.setdefault(key, None)
+    completions_state = admin.setdefault("review_completions", {})
+    for key in REVIEW_FLAG_KEYS:
+        completions_state.setdefault(key, False)
     record.setdefault("notifications", {})
 
     overrides = body.get("overrides")
     if isinstance(overrides, dict):
+        unknown = set(overrides) - set(OVERRIDABLE_FLAG_KEYS)
+        if unknown:
+            return store.error_response(400, f"Unknown override flag(s): {sorted(unknown)}")
+        invalid = [key for key, value in overrides.items() if value is not None and not isinstance(value, bool)]
+        if invalid:
+            return store.error_response(400, f"Override values must be boolean or null: {sorted(invalid)}")
         if any(v is not None for v in overrides.values()) and not body.get("override_reason"):
             return store.error_response(400, "override_reason is required when setting an override")
-        admin["overrides"].update(overrides)
+        overrides_state.update(overrides)
 
     completions = body.get("review_completions")
     if completions is not None:
         if not isinstance(completions, dict):
             return store.error_response(400, "review_completions must be an object")
-        bad = [k for k, v in completions.items() if k not in FLAG_KEYS or not isinstance(v, bool)]
+        bad = [k for k, v in completions.items() if k not in REVIEW_FLAG_KEYS or not isinstance(v, bool)]
         if bad:
             return store.error_response(
                 400, f"Invalid review_completions entries: {', '.join(sorted(bad))}"
             )
-        admin["review_completions"].update(completions)
+        completions_state.update(completions)
 
     if "override_reason" in body:
         admin["override_reason"] = body["override_reason"]

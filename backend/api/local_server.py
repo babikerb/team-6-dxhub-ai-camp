@@ -38,10 +38,12 @@ from handlers import (
     chatbot_parse,
     chatbot_patch,
     create_request,
+    evidence,
     get_request,
     get_review_docs,
     list_requests,
     reminder_check,
+    requester_docs,
     review_upload,
     security_report,
 )
@@ -203,6 +205,53 @@ async def review_upload_url_route(request: Request, request_id: str):
 async def review_upload_confirm_route(request: Request, request_id: str):
     event = await _to_event(request, {"id": request_id})
     return _from_lambda_response(review_upload.confirm_handler(event))
+
+
+def _schedule_requester_regen(background_tasks: BackgroundTasks, body: dict):
+    """Local stand-in for ATI/ITSO worker invokes after requester evidence lands."""
+    doc_type = body.get("doc_type")
+    request_id = body.get("request_id")
+    if not doc_type or not request_id:
+        return
+    review = evidence.review_type_for(doc_type)
+    if review == "ati":
+        background_tasks.add_task(ati_report.generate_and_save, request_id)
+    elif review == "itso":
+        background_tasks.add_task(security_report.generate_and_save, request_id)
+
+
+@app.get("/requests/{request_id}/requester-docs/context")
+async def requester_docs_context_route(request_id: str):
+    event = {"pathParameters": {"id": request_id}}
+    return _from_lambda_response(requester_docs.context_handler(event))
+
+
+@app.post("/requests/{request_id}/requester-docs/upload-url")
+async def requester_docs_upload_url_route(request: Request, request_id: str):
+    event = await _to_event(request, {"id": request_id})
+    return _from_lambda_response(requester_docs.upload_url_handler(event))
+
+
+@app.post("/requests/{request_id}/requester-docs/confirm")
+async def requester_docs_confirm_route(
+    request: Request, request_id: str, background_tasks: BackgroundTasks
+):
+    event = await _to_event(request, {"id": request_id})
+    lambda_response = requester_docs.confirm_handler(event)
+    if lambda_response["statusCode"] == 200:
+        _schedule_requester_regen(background_tasks, json.loads(lambda_response["body"]))
+    return _from_lambda_response(lambda_response)
+
+
+@app.post("/requests/{request_id}/requester-docs/link")
+async def requester_docs_link_route(
+    request: Request, request_id: str, background_tasks: BackgroundTasks
+):
+    event = await _to_event(request, {"id": request_id})
+    lambda_response = requester_docs.link_handler(event)
+    if lambda_response["statusCode"] == 200:
+        _schedule_requester_regen(background_tasks, json.loads(lambda_response["body"]))
+    return _from_lambda_response(lambda_response)
 
 
 @app.post("/requests/{request_id}/ati-documents")

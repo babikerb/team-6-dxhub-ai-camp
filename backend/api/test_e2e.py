@@ -147,6 +147,7 @@ def test_review_completions(dynamo_table):
         "security_flag": False,
         "integration_flag": False,
     }
+    assert record["admin"]["overrides"]["ai_flag"] is None
 
     # Mark the ITSO (security) review completed; others stay untouched.
     res = admin_patch.handler(
