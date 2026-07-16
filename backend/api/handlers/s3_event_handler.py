@@ -33,7 +33,7 @@ import urllib.parse
 import boto3
 from botocore.exceptions import ClientError
 
-from handlers.store import _get_table, now_iso
+from .store import _get_table, now_iso
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)

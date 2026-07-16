@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 load_dotenv(Path(__file__).parent / ".env")
 
 import uvicorn
-from fastapi import FastAPI, Request, Response
+from fastapi import BackgroundTasks, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from handlers import (
@@ -36,6 +36,7 @@ from handlers import (
     get_request,
     get_review_docs,
     list_requests,
+    security_report,
 )
 
 app = FastAPI(title="SoftwareRequests API (local mock)")
@@ -87,9 +88,28 @@ async def get_request_route(request: Request, request_id: str):
 
 
 @app.patch("/requests/{request_id}/chatbot")
-async def chatbot_patch_route(request: Request, request_id: str):
+async def chatbot_patch_route(request: Request, request_id: str, background_tasks: BackgroundTasks):
     event = await _to_event(request, {"id": request_id})
-    return _from_lambda_response(chatbot_patch.handler(event))
+    lambda_response = chatbot_patch.handler(event)
+    if lambda_response["statusCode"] == 200:
+        body = json.loads(lambda_response["body"])
+        if body.get("flags", {}).get("security_flag"):
+            # Fire-and-forget: the requester's response returns immediately;
+            # the report finishes writing to DynamoDB on its own afterward.
+            background_tasks.add_task(security_report.generate_and_save, request_id)
+    return _from_lambda_response(lambda_response)
+
+
+@app.post("/requests/{request_id}/security-report")
+async def security_report_route(request_id: str, background_tasks: BackgroundTasks):
+    event = {"pathParameters": {"id": request_id}}
+    lambda_response = security_report.handler(event)
+    if lambda_response["statusCode"] == 202:
+        # handler() marked it pending and (in real Lambda only) fired the
+        # async worker invoke, which no-ops locally -- background it here
+        # instead so local dev still actually completes the report.
+        background_tasks.add_task(security_report.generate_and_save, request_id)
+    return _from_lambda_response(lambda_response)
 
 
 @app.patch("/requests/{request_id}/admin")

@@ -65,6 +65,18 @@ export async function patchAdmin(requestId, payload) {
 }
 
 /**
+ * POST /requests/{id}/security-report — generate or regenerate the automated
+ * Security risk report (Phase 1: narrative report). Blocks until done (this
+ * fetches vendor documents + calls Bedrock, so it can take 20-40s) — the
+ * caller should show a spinner. Returns the full updated request record.
+ */
+export async function regenerateSecurityReport(requestId) {
+  return request(`/requests/${encodeURIComponent(requestId)}/security-report`, {
+    method: "POST",
+  });
+}
+
+/**
  * POST /chatbot/match-software — fuzzy/semantic match of a requested software
  * name against the SDSU catalog, plus approved-alternative suggestions.
  * Returns {status, matched_name, match_confidence, alternatives:[{name,why}], reasoning}.

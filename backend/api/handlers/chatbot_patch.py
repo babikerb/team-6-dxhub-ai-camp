@@ -6,10 +6,17 @@ TEMPORARY: flags are computed with store._stub_compute_flags(). Swap this
 for `from rules_engine.rules_engine import compute_flags` once Person 4
 delivers backend/rules_engine/ -- same input/output shape, no other changes
 needed here.
+
+If security_flag comes back true, this marks security_review.status="pending"
+synchronously so the dashboard reflects it immediately, then asynchronously
+invokes the security-report worker Lambda (security_report.invoke_worker_async
+-- a real, fire-and-forget Lambda invocation in deployed AWS; a no-op in
+local dev, where local_server.py's chatbot_patch_route backgrounds the same
+work itself via FastAPI BackgroundTasks instead). Either way, the requester's
+submission never blocks on report generation.
 """
 
-from . import store
-from . import emailer
+from . import emailer, security_report, store
 
 
 def handler(event, context=None):
@@ -37,6 +44,8 @@ def handler(event, context=None):
     record["flags"] = flags
     record["status"] = "ITReview"
     record["updated_at"] = store.now_iso()
+    if flags.get("security_flag"):
+        record["security_review"] = {"status": "pending"}
 
     store.save_request(record)
 
@@ -44,5 +53,8 @@ def handler(event, context=None):
         emailer.send_ticket_received_email(record)
     except Exception as exc:
         print(f"Ticket-received email failed for {record.get('request_id')}: {exc}")
+
+    if flags.get("security_flag"):
+        security_report.invoke_worker_async(request_id)
 
     return store.response(200, record)

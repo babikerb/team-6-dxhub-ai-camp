@@ -7,12 +7,22 @@ Body shape:
   "override_reason": "string",
   "overridden_by": "string",
   "admin_notes": "string",
-  "status": "Submitted | ITReview | AdditionalReview | Approved | Denied"   # optional
+  "status": "Submitted | ITReview | AdditionalReview | Approved | Denied",   # optional
+  "attached_documents": {                                                    # optional
+    "privacy_policy" | "terms_of_service" | "vpat" | "hecvat" | "soc2": "https://... | null"
+  }
 }
+
+attached_documents lets a reviewer manually paste a document link the
+requester didn't provide (or the security report's auto-search didn't find --
+HECVAT/SOC2 are never asked of the requester, only auto-searched). These take
+priority over the requester-provided vendor_*_url fields when the security
+report next generates -- see security_report_generator._gather_documents().
 """
 
 from . import store
 
+ATTACHABLE_DOC_TYPES = {"privacy_policy", "terms_of_service", "vpat", "hecvat", "soc2"}
 FLAG_KEYS = ("ati_flag", "security_flag", "integration_flag")
 
 
@@ -55,6 +65,16 @@ def handler(event, context=None):
         admin["overridden_by"] = body["overridden_by"]
     if "admin_notes" in body:
         admin["admin_notes"] = body["admin_notes"]
+
+    attached = body.get("attached_documents")
+    if isinstance(attached, dict):
+        unknown = set(attached) - ATTACHABLE_DOC_TYPES
+        if unknown:
+            return store.error_response(400, f"Unknown doc type(s): {sorted(unknown)}")
+        for url in attached.values():
+            if url is not None and not (isinstance(url, str) and url.strip().lower().startswith("http")):
+                return store.error_response(400, "Document URLs must start with http:// or https://, or be null")
+        record["admin"].setdefault("attached_documents", {}).update(attached)
 
     new_status = body.get("status")
     if new_status:

@@ -9,8 +9,6 @@ import { answersToItReview } from "./itReview.js";
 // type: "text" | "choice" | "multiselect",
 // options (for choice/multiselect),
 // skip(answers) -> true if this step should be skipped given answers so far
-// software_name / scope_of_usage are skipped when already present from
-// the intake form (pre-seeded into answers on load).
 // -----------------------------------------------------------------
 const STEPS = [
   {
@@ -19,7 +17,7 @@ const STEPS = [
     bot: "What's the name of the software you're requesting?",
     type: "text",
     placeholder: "e.g. Zoom, Adobe Creative Cloud",
-    skip: (a) => Boolean(a.software_name),
+    skip: (a) => Boolean(a.software_name), // already collected by the intake form
   },
   {
     id: "scope_of_usage",
@@ -32,7 +30,7 @@ const STEPS = [
       { label: "One department or office", value: "Department" },
       { label: "An entire college or the whole university", value: "University" },
     ],
-    skip: (a) => Boolean(a.scope_of_usage),
+    skip: (a) => Boolean(a.scope_of_usage), // already collected by the intake form
   },
   {
     id: "estimated_users",
@@ -96,39 +94,6 @@ const STEPS = [
       { label: "No, separate login", value: "no" },
       { label: "Not sure", value: "unsure" },
     ],
-  },
-  // AI capabilities — California Automated Decision System (ADS) tracking, AB 302.
-  // Captured up front so SDSU can inventory AI/ADS software instead of after the fact.
-  {
-    id: "ai_capabilities",
-    label: "AI",
-    bot: "Does this software use AI? For example, it writes or makes things for you, answers questions, gives suggestions, or figures things out on its own.",
-    type: "choice",
-    options: [
-      { label: "Yes", value: "yes" },
-      { label: "No", value: "no" },
-      { label: "Not sure", value: "unsure" },
-    ],
-  },
-  {
-    id: "ai_use_description",
-    label: "AI",
-    bot: "What do those AI features do, and how do you plan to use them?",
-    type: "text",
-    placeholder: "e.g. drafts email replies; suggests grades on quizzes",
-    skip: (a) => a.ai_capabilities !== "yes",
-  },
-  {
-    id: "ai_automated_decisions",
-    label: "AI",
-    bot: "Does it help decide things about people — like who gets admitted or hired, who receives financial aid, or what grade someone gets?",
-    type: "choice",
-    options: [
-      { label: "Yes", value: "yes" },
-      { label: "No", value: "no" },
-      { label: "Not sure", value: "unsure" },
-    ],
-    skip: (a) => a.ai_capabilities !== "yes",
   },
   // Block A — always asked
   {
@@ -247,6 +212,39 @@ const STEPS = [
     type: "text",
     placeholder: "Describe, or type 'no'",
   },
+  // AI / Automated Decision System (ADS) tracking — California AB 302. Grouped
+  // here with the other compliance questions, not inserted mid-flow.
+  {
+    id: "ai_capabilities",
+    label: "AI",
+    bot: "Does this software use AI? For example, it writes or makes things for you, answers questions, gives suggestions, or figures things out on its own.",
+    type: "choice",
+    options: [
+      { label: "Yes", value: "yes" },
+      { label: "No", value: "no" },
+      { label: "Not sure", value: "unsure" },
+    ],
+  },
+  {
+    id: "ai_use_description",
+    label: "AI",
+    bot: "What do those AI features do, and how do you plan to use them?",
+    type: "text",
+    placeholder: "e.g. drafts email replies; suggests grades on quizzes",
+    skip: (a) => a.ai_capabilities !== "yes",
+  },
+  {
+    id: "ai_automated_decisions",
+    label: "AI",
+    bot: "Does it help decide things about people — like who gets admitted or hired, who receives financial aid, or what grade someone gets?",
+    type: "choice",
+    options: [
+      { label: "Yes", value: "yes" },
+      { label: "No", value: "no" },
+      { label: "Not sure", value: "unsure" },
+    ],
+    skip: (a) => a.ai_capabilities !== "yes",
+  },
   {
     id: "vendor_privacy_policy_url",
     label: "Vendor",
@@ -263,10 +261,10 @@ const STEPS = [
   },
   {
     id: "vendor_accessibility_url",
-    label: "Vendor",
-    bot: 'Does the vendor have accessibility documentation — sometimes called a VPAT — showing the software works with screen readers and assistive tech? Paste a link, ask me to find it, or say "not sure."',
+    label: "Accessibility",
+    bot: 'Do you have the vendor\'s accessibility documentation — a VPAT, an accessibility roadmap, or a third-party accessibility evaluation report? Paste a link if you have one. If you don\'t, ask me to look and I\'ll gather what I find for the IT reviewer to check. Or say "not sure."',
     type: "text",
-    placeholder: "https:// ... or 'not sure'",
+    placeholder: "https:// ... paste a link, ask me to find it, or 'not sure'",
   },
 ];
 
@@ -274,6 +272,8 @@ function visibleSteps(answers) {
   return STEPS.filter((s) => !(s.skip && s.skip(answers)));
 }
 
+// First step not already answered/skipped — used to start past the questions
+// the intake form pre-seeded (software_name, scope_of_usage).
 function findFirstStepIndex(answers) {
   let i = 0;
   while (i < STEPS.length && STEPS[i].skip && STEPS[i].skip(answers)) {
@@ -282,16 +282,97 @@ function findFirstStepIndex(answers) {
   return i;
 }
 
+// -----------------------------------------------------------------
+// PART C — flag computation logic (mirrors the Python spec exactly)
+// Computed silently. Never rendered to the requester — staff/admin only.
+// -----------------------------------------------------------------
+export function evaluate(a) {
+  const scopeQualifies =
+    a.scope_of_usage === "Classroom" ||
+    a.scope_of_usage === "College" ||
+    a.scope_of_usage === "University";
+  const highUsers = a.estimated_users === "30-100" || a.estimated_users === "100+";
+  const ati_flag = highUsers && scopeQualifies;
+  const ati_flag_reason = `${a.estimated_users} users, ${a.scope_of_usage} scope`;
+
+  const blockA = {
+    HIPAA: a.la_health === "yes",
+    PII: a.la_pii === "yes",
+    "PCI DSS / GLBA": a.la_payment === "yes",
+    "Law Enforcement Records": a.la_lawenforcement === "yes",
+  };
+  const blockATriggered = Object.keys(blockA).filter((k) => blockA[k]);
+
+  const blockB = {
+    FERPA: a.lb_coursework === "yes",
+    "Employee Information": a.lb_employee === "yes",
+    Financials: a.lb_budget === "yes",
+    "Research/IP": a.lb_research === "yes",
+    "Attorney-client": a.lb_legal === "yes",
+  };
+  const blockBTriggered = Object.keys(blockB).filter((k) => blockB[k]);
+
+  let risk_level, security_flag, security_flag_reason;
+  if (blockATriggered.length > 0) {
+    risk_level = "High";
+    security_flag = true;
+    security_flag_reason = "Level 1 data: " + blockATriggered.join(", ");
+  } else if (blockBTriggered.length > 0) {
+    risk_level = "Medium";
+    security_flag = true;
+    security_flag_reason = "Level 2 data: " + blockBTriggered.join(", ");
+  } else {
+    risk_level = "Low";
+    security_flag = false;
+    security_flag_reason = "No Level 1 or Level 2 data identified";
+  }
+
+  const integration_flag = a.shares_data_with_campus_system === "yes";
+  const integration_flag_reason =
+    a.integration_explanation || (integration_flag ? "Shares data with another campus system" : null);
+
+  // AI / Automated Decision System tracking (California AB 302). ai_flag marks
+  // any AI-enabled software; the reason calls out the high-risk ADS subset
+  // (used to make decisions about people) that goes on the state inventory.
+  const ai_flag = a.ai_capabilities === "yes";
+  let ai_flag_reason;
+  if (a.ai_automated_decisions === "yes") {
+    ai_flag_reason = "AI-enabled automated decision system — California ADS inventory (AB 302)";
+  } else if (ai_flag) {
+    ai_flag_reason = "AI-enabled software";
+  } else {
+    ai_flag_reason = "No AI capabilities reported";
+  }
+
+  return {
+    ati_flag,
+    ati_flag_reason,
+    security_flag,
+    security_flag_reason,
+    risk_level,
+    integration_flag,
+    integration_flag_reason,
+    ai_flag,
+    ai_flag_reason,
+  };
+}
+
+// (it_review is built by answersToItReview() from itReview.js — the team's
+// shared mapper — so the shape stays consistent across the app.)
+
 // Renders inline markdown within a single line: **bold**/__bold__,
 // *italic*/_italic_, and `inline code`. Returns an array of strings/nodes.
+// [label](url) links are stripped down to their label first -- the backend
+// occasionally leaks raw markdown links that should never reach the screen.
 function renderInline(text) {
+  const stripped = String(text || "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
   const regex = /(\*\*|__)(.+?)\1|(`)(.+?)\3|(\*|_)(.+?)\5/g;
   const nodes = [];
   let lastIndex = 0;
   let match;
   let key = 0;
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > lastIndex) nodes.push(text.slice(lastIndex, match.index));
+  while ((match = regex.exec(stripped)) !== null) {
+    if (match.index > lastIndex) nodes.push(stripped.slice(lastIndex, match.index));
     if (match[1]) {
       nodes.push(<strong key={key++}>{match[2]}</strong>);
     } else if (match[3]) {
@@ -305,7 +386,7 @@ function renderInline(text) {
     }
     lastIndex = regex.lastIndex;
   }
-  if (lastIndex < text.length) nodes.push(text.slice(lastIndex));
+  if (lastIndex < stripped.length) nodes.push(stripped.slice(lastIndex));
   return nodes;
 }
 
@@ -348,8 +429,8 @@ function BotText({ text }) {
 
 function RequesterChat({ requestId }) {
   const [answers, setAnswers] = useState({});
-  const [log, setLog] = useState([]);
-  const [stepIndex, setStepIndex] = useState(0);
+  const [log, setLog] = useState([]); // seeded by the load effect below
+  const [stepIndex, setStepIndex] = useState(0); // index into full STEPS array
   const [textInput, setTextInput] = useState("");
   const [multiSelected, setMultiSelected] = useState([]);
   const [done, setDone] = useState(false);
@@ -358,54 +439,41 @@ function RequesterChat({ requestId }) {
   const [pending, setPending] = useState(null);        // {value,label} awaiting confirm
   const [revealButtons, setRevealButtons] = useState(false); // model laid out options
   const [convo, setConvo] = useState([]);              // per-question turn history
-  // Backend load/persist state:
+  const [isMobile, setIsMobile] = useState(false);     // phone vs computer layout
+  // Backend load/persist state (integrates with the intake form + dashboard):
   const [loading, setLoading] = useState(Boolean(requestId));
   const [loadError, setLoadError] = useState(null);
-  const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState(null);
-  const [pendingAnswers, setPendingAnswers] = useState(null);
   const scrollRef = useRef(null);
 
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    }
+  }, [log]);
+
+  // Persist the finished answers: the backend computes flags from it_review and
+  // stores them on the request (which the admin dashboard then reads).
   const persistReview = useCallback(
     async (finalAnswers) => {
-      if (!requestId) {
-        setDone(true);
-        return;
-      }
-      setSubmitting(true);
+      setLog((l) => [
+        ...l,
+        { from: "bot", label: "Submitted", text: "Thanks — that's everything I need. Your request has been submitted for IT Review." },
+      ]);
+      setDone(true);
       setSubmitError(null);
+      if (!requestId) return;
       try {
-        const it_review = answersToItReview(finalAnswers);
-        await submitChatbotReview(requestId, it_review);
-        setPendingAnswers(null);
-        setDone(true);
-        setLog((l) => {
-          const already = l.some((e) => e.label === "Submitted");
-          if (already) return l;
-          return [
-            ...l,
-            {
-              from: "bot",
-              label: "Submitted",
-              text: "Thanks — that's everything I need. Your request has been submitted for IT Review.",
-            },
-          ];
-        });
+        await submitChatbotReview(requestId, answersToItReview(finalAnswers));
       } catch (err) {
-        setPendingAnswers(finalAnswers);
-        setSubmitError(err.message || "Could not save your answers. Please try again.");
-      } finally {
-        setSubmitting(false);
+        setSubmitError(err.message || "Could not save your answers.");
       }
     },
     [requestId]
   );
 
-  // Load the intake record once per requestId, pre-seeding software_name /
-  // scope_of_usage so we don't ask what the intake form already collected.
-  // Important: do NOT gate on a "bootstrapped" ref — React Strict Mode
-  // runs effect → cleanup → effect again on the same instance, which would
-  // leave loading stuck forever after cancelling the first fetch.
+  // On load, pull the intake record and pre-seed software_name / scope_of_usage
+  // so the chatbot doesn't re-ask what the 18-question form already collected.
   useEffect(() => {
     if (!requestId) {
       setLog([{ from: "bot", label: STEPS[0].label, text: STEPS[0].bot }]);
@@ -413,53 +481,55 @@ function RequesterChat({ requestId }) {
       setLoading(false);
       return;
     }
-
     let cancelled = false;
     setLoading(true);
     setLoadError(null);
-
     (async () => {
       try {
         const record = await getRequest(requestId);
         if (cancelled) return;
         const requestor = record.requestor || {};
-        const seeded = {
-          software_name: requestor.software_name || undefined,
-          scope_of_usage: requestor.scope_of_usage || undefined,
-        };
-        Object.keys(seeded).forEach((k) => seeded[k] === undefined && delete seeded[k]);
-
+        const seeded = {};
+        if (requestor.software_name) seeded.software_name = requestor.software_name;
+        if (requestor.scope_of_usage) seeded.scope_of_usage = requestor.scope_of_usage;
         const startIndex = findFirstStepIndex(seeded);
         setAnswers(seeded);
         setStepIndex(startIndex);
         if (startIndex < STEPS.length) {
           setLog([{ from: "bot", label: STEPS[startIndex].label, text: STEPS[startIndex].bot }]);
-        } else if (!cancelled) {
+        } else {
           await persistReview(seeded);
         }
       } catch (err) {
-        if (!cancelled) {
-          setLoadError(err.message || "Could not load this request.");
-        }
+        if (!cancelled) setLoadError(err.message || "Could not load this request.");
       } finally {
         if (!cancelled) setLoading(false);
       }
     })();
-
     return () => {
       cancelled = true;
     };
   }, [requestId, persistReview]);
 
+  // Track phone-sized viewports so the chat frame can go full-screen on mobile
+  // and stay a centered card on desktop.
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
-    }
-  }, [log, submitError]);
+    const mq = window.matchMedia("(max-width: 640px)");
+    const update = () => setIsMobile(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+
+  const pageStyle = isMobile ? { ...styles.page, ...styles.pageMobile } : styles.page;
+  const cardStyle = isMobile ? { ...styles.card, ...styles.cardMobile } : styles.card;
+  const mastheadStyle = isMobile ? { ...styles.masthead, ...styles.mastheadMobile } : styles.masthead;
+  const logStyle = isMobile ? { ...styles.log, ...styles.logMobile } : styles.log;
+  const textRowStyle = isMobile ? { ...styles.textRow, ...styles.textRowMobile } : styles.textRow;
 
   const currentStep = STEPS[stepIndex];
   const visible = useMemo(() => visibleSteps(answers), [answers]);
-  const visiblePosition = currentStep ? visible.findIndex((s) => s.id === currentStep.id) : -1;
+  const visiblePosition = visible.findIndex((s) => s.id === currentStep.id);
 
   function findNextIndex(fromIndex, updatedAnswers) {
     let i = fromIndex + 1;
@@ -480,6 +550,7 @@ function RequesterChat({ requestId }) {
       setStepIndex(index);
       setMultiSelected([]);
     } else {
+      // All questions answered: persist to the backend (computes + stores flags).
       persistReview(updatedAnswers);
     }
   }
@@ -492,7 +563,6 @@ function RequesterChat({ requestId }) {
   }
 
   function advance(value, displayText) {
-    if (submitting) return;
     setLog((l) => [...l, { from: "user", text: displayText }]);
     commitAnswer(value);
   }
@@ -629,9 +699,9 @@ function RequesterChat({ requestId }) {
 
   if (loading) {
     return (
-      <div style={styles.page}>
-        <div style={styles.card}>
-          <div style={styles.masthead}>
+      <div style={pageStyle}>
+        <div style={cardStyle}>
+          <div style={mastheadStyle}>
             <div style={styles.badge}>SDSU</div>
             <div>
               <div style={styles.headline}>Software Request Assistant</div>
@@ -648,25 +718,25 @@ function RequesterChat({ requestId }) {
 
   if (loadError) {
     return (
-      <div style={styles.page}>
-        <div style={styles.card}>
-          <div style={styles.masthead}>
+      <div style={pageStyle}>
+        <div style={cardStyle}>
+          <div style={mastheadStyle}>
             <div style={styles.badge}>SDSU</div>
             <div>
               <div style={styles.headline}>Software Request Assistant</div>
             </div>
           </div>
-          <div style={{ ...styles.footer, color: "var(--red)" }}>{loadError}</div>
+          <div style={styles.footer}>Couldn't load this request: {loadError}</div>
         </div>
       </div>
     );
   }
 
   return (
-    <div style={styles.page}>
-      <div style={styles.card}>
+    <div style={pageStyle}>
+      <div style={cardStyle}>
         {/* Masthead */}
-        <div style={styles.masthead}>
+        <div style={mastheadStyle}>
           <div style={styles.badge}>SDSU</div>
           <div>
             <div style={styles.headline}>Software Request Assistant</div>
@@ -677,7 +747,7 @@ function RequesterChat({ requestId }) {
         </div>
 
         {/* Step sequence */}
-        {!done && currentStep && (
+        {!done && (
           <React.Fragment>
             <div style={styles.dotsWrap}>
               {visible.map((s, i) => (
@@ -708,7 +778,7 @@ function RequesterChat({ requestId }) {
         )}
 
         {/* Log */}
-        <div ref={scrollRef} style={styles.log}>
+        <div ref={scrollRef} style={logStyle}>
           {log.map((entry, i) =>
             entry.from === "bot" ? (
               <div key={i} style={styles.botEntry}>
@@ -727,20 +797,7 @@ function RequesterChat({ requestId }) {
         </div>
 
         {/* Input */}
-        {submitting ? (
-          <div style={styles.footer}>Saving your answers…</div>
-        ) : submitError ? (
-          <div style={styles.errorWrap}>
-            <div style={styles.errorText}>{submitError}</div>
-            <button
-              style={styles.textSubmit}
-              onClick={() => persistReview(pendingAnswers || answers)}
-              type="button"
-            >
-              Try again
-            </button>
-          </div>
-        ) : !done && currentStep ? (
+        {!done ? (
           pending ? (
             <div style={styles.choiceList}>
               <button style={styles.choiceRow} onClick={confirmYes}>
@@ -754,7 +811,7 @@ function RequesterChat({ requestId }) {
             </div>
           ) : isConversational ? (
             <div style={styles.multiWrap}>
-              <div style={styles.textRow}>
+              <div style={textRowStyle}>
                 <input
                   style={styles.textField}
                   value={textInput}
@@ -835,14 +892,14 @@ function RequesterChat({ requestId }) {
                   <span style={styles.choiceMark}>?</span>
                 </button>
               </div>
-              <div style={styles.textRow}>
+              <div style={textRowStyle}>
                 <button style={styles.textSubmit} onClick={submitMulti} disabled={multiSelected.length === 0}>
                   Continue
                 </button>
               </div>
             </div>
           ) : (
-            <div style={styles.textRow}>
+            <div style={textRowStyle}>
               <input
                 style={styles.textField}
                 value={textInput}
@@ -878,6 +935,29 @@ const styles = {
     overflow: "hidden",
     display: "flex",
     flexDirection: "column",
+  },
+  // --- Phone layout: fill the screen edge-to-edge, no rounded frame ---
+  pageMobile: {
+    padding: "0",
+    alignItems: "stretch",
+  },
+  cardMobile: {
+    width: "100%",
+    maxWidth: "100%",
+    minWidth: 0,
+    height: "100vh",
+    borderRadius: 0,
+    border: "none",
+  },
+  mastheadMobile: {
+    padding: "14px 16px",
+  },
+  logMobile: {
+    paddingLeft: "16px",
+    paddingRight: "16px",
+  },
+  textRowMobile: {
+    padding: "14px 16px",
   },
   masthead: {
     display: "flex",
@@ -940,15 +1020,16 @@ const styles = {
     letterSpacing: "0.02em",
   },
   log: {
-    padding: "0 28px",
+    paddingLeft: "28px",
+    paddingRight: "28px",
+    paddingTop: "18px",
+    paddingBottom: "22px",
     flex: "1 1 auto",
     minHeight: "200px",
     overflowY: "auto",
     display: "flex",
     flexDirection: "column",
     gap: "18px",
-    paddingBottom: "22px",
-    paddingTop: "18px",
   },
   botEntry: {
     display: "flex",
@@ -1077,20 +1158,6 @@ const styles = {
     fontFamily: "'IBM Plex Mono', monospace",
     fontSize: "11px",
     color: "var(--stone)",
-    textAlign: "center",
-  },
-  errorWrap: {
-    padding: "16px 28px 22px",
-    borderTop: "1px solid var(--line)",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: "12px",
-  },
-  errorText: {
-    fontFamily: "'IBM Plex Mono', monospace",
-    fontSize: "12px",
-    color: "var(--red)",
     textAlign: "center",
   },
 };

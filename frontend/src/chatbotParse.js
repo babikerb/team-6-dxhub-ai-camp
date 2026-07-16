@@ -47,6 +47,25 @@ export async function parseReply(questionId, reply, intakeContext = {}) {
   return res.json(); // { answer, confidence, reasoning, quote, cascade_action }
 }
 
+// Submit the finished chatbot answers. Sends the structured it_review; the
+// backend computes the flags (compute_flags) and writes it_review + flags to the
+// request record, which is what the admin dashboard then reads.
+export async function submitChatbot(requestId, itReview) {
+  const res = await fetch(
+    `${API_BASE}/requests/${encodeURIComponent(requestId)}/chatbot`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ it_review: itReview }),
+    }
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `Submit failed (${res.status})`);
+  }
+  return res.json();
+}
+
 // Confusion check for an open-text question. Returns {is_answer, message}.
 export async function assistText(questionId, questionText, reply, intakeContext = {}) {
   const res = await fetch(`${API_BASE}/chatbot/assist`, {

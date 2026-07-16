@@ -445,6 +445,14 @@ export default function AdminDashboard() {
     setSelectedId(null);
   }
 
+  // Like handleSaved, but keeps the detail panel open -- used when the
+  // security report finishes generating/regenerating in the background.
+  function handleRefreshed(updatedRequest) {
+    setRequests((prev) =>
+      prev.map((r) => (r.request_id === updatedRequest.request_id ? updatedRequest : r))
+    );
+  }
+
   const selected = requests.find((r) => r.request_id === selectedId) ?? null;
 
   return (
@@ -677,6 +685,7 @@ export default function AdminDashboard() {
           request={selected}
           onClose={() => setSelectedId(null)}
           onSaved={handleSaved}
+          onRefreshed={handleRefreshed}
         />
       )}
     </div>
