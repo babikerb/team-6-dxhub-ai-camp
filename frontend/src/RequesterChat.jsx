@@ -282,6 +282,17 @@ function findFirstStepIndex(answers) {
   return i;
 }
 
+// Shown only when the intake form marked this request as a renewal
+// (record.requestor.purchase_type === "renewal"). Plain text on purpose —
+// the chat panel renders text, not markdown.
+const RENEWAL_INTRO =
+  "Thanks for renewing! Quick heads-up before we start: even though you've " +
+  "been through this before, we'll still walk through the full set of " +
+  "questions. Two reasons — the way your team uses the software may have " +
+  "changed since the last review, and the vendor may have changed the " +
+  "product itself. It only takes a few minutes, and it keeps your review " +
+  "accurate.";
+
 // -----------------------------------------------------------------
 // PART C — flag computation logic (mirrors the Python spec exactly)
 // Computed silently. Never rendered to the requester — staff/admin only.
@@ -477,7 +488,16 @@ function RequesterChat({ requestId }) {
         setAnswers(seeded);
         setStepIndex(startIndex);
         if (startIndex < STEPS.length) {
-          setLog([{ from: "bot", label: STEPS[startIndex].label, text: STEPS[startIndex].bot }]);
+          const opening = [];
+          if (requestor.purchase_type === "renewal") {
+            opening.push({ from: "bot", label: "Renewal", text: RENEWAL_INTRO });
+          }
+          opening.push({
+            from: "bot",
+            label: STEPS[startIndex].label,
+            text: STEPS[startIndex].bot,
+          });
+          setLog(opening);
         } else {
           await persistReview(seeded);
         }

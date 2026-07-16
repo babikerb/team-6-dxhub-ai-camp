@@ -65,6 +65,22 @@ export async function patchAdmin(requestId, payload) {
 }
 
 /**
+ * POST /chatbot/identify-software — confirm what a named product actually is
+ * ("Canva — online design platform"), grounded in a web search.
+ * Returns {identified, canonical_name, one_liner, source_url, confidence}.
+ */
+export async function identifySoftware(softwareName, useDescription, vendorWebsite) {
+  return request("/chatbot/identify-software", {
+    method: "POST",
+    body: JSON.stringify({
+      software_name: softwareName,
+      use_description: useDescription || undefined,
+      vendor_website: vendorWebsite || undefined,
+    }),
+  });
+}
+
+/**
  * POST /chatbot/match-software — fuzzy/semantic match of a requested software
  * name against the SDSU catalog, plus approved-alternative suggestions.
  * Returns {status, matched_name, match_confidence, alternatives:[{name,why}], reasoning}.

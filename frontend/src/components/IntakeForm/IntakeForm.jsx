@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { createRequest, matchSoftware } from "./api.js";
+import { createRequest, matchSoftware, identifySoftware } from "./api.js";
 import { matchCatalog, SDSU_CATALOG } from "./catalog.js";
 
 // ---- Field config (mirrors the 18 questions in Chatbot_Questions_and_Flags.md, Part A) ----
@@ -281,6 +281,11 @@ function IntakeForm({ onSubmitted }) {
   const [catalogMatches, setCatalogMatches] = useState([]);
   const [alternatives, setAlternatives] = useState([]);
   const [checking, setChecking] = useState(false);
+  // What we think the requested software IS. Held outside `form` on purpose:
+  // form state is generated from ALL_FIELDS, and this is a confirmation, not a
+  // new intake question.
+  const [identity, setIdentity] = useState(null);
+  const [identityConfirmed, setIdentityConfirmed] = useState(false);
   const [pendingStepIndex, setPendingStepIndex] = useState(null);
   const [requestId, setRequestId] = useState(null);
   const [copied, setCopied] = useState(false);
@@ -297,6 +302,11 @@ function IntakeForm({ onSubmitted }) {
   function setField(id, value) {
     setForm((f) => ({ ...f, [id]: value }));
     clearError(id);
+    // Editing the name invalidates any confirmation of the old one.
+    if (id === "software_name") {
+      setIdentity(null);
+      setIdentityConfirmed(false);
+    }
   }
 
   function toggleMultiValue(id, value) {
@@ -326,6 +336,70 @@ function IntakeForm({ onSubmitted }) {
     }
   }
 
+  // Catalog + alternatives checks for the software-name step. Returns true if it
+  // took over the screen (caller should stop), false to continue the form.
+  // Split out of handleNext so the identity-confirm step can resume it: state
+  // updates aren't flushed synchronously, so re-entering handleNext would read
+  // a stale identityConfirmed and loop the confirm screen forever.
+  async function runCatalogChecks() {
+    // 1) Instant keyword check for exact/alias hits (no network).
+    const matches = matchCatalog(form.software_name);
+    if (matches.length > 0) {
+      setCatalogMatches(matches);
+      setView("catalogMatch");
+      return true;
+    }
+
+    // 2) Fuzzy/semantic check + approved alternatives via the LLM matcher.
+    //    Catches variants/typos/rebrands the keyword pass misses, and suggests
+    //    approved options when SDSU doesn't offer the requested tool.
+    setChecking(true);
+    try {
+      const r = await matchSoftware(form.software_name, form.use_description, SDSU_CATALOG);
+      if (r.status === "offered" && r.matched_name) {
+        const entry = SDSU_CATALOG.find((e) => e.name === r.matched_name);
+        if (entry) {
+          setCatalogMatches([entry]);
+          setView("catalogMatch");
+          return true;
+        }
+      } else if (r.status === "alternative_available" && (r.alternatives || []).length > 0) {
+        const alts = r.alternatives
+          .map((a) => {
+            const entry = SDSU_CATALOG.find((e) => e.name === a.name);
+            return entry ? { ...entry, why: a.why } : null;
+          })
+          .filter(Boolean);
+        if (alts.length > 0) {
+          setAlternatives(alts);
+          setView("alternatives");
+          return true;
+        }
+      }
+      // "not_found" (or nothing usable) — fall through and continue the request.
+    } catch {
+      // Matcher unavailable — never block the requester; just continue.
+    } finally {
+      setChecking(false);
+    }
+    return false;
+  }
+
+  // "Yes, that's the right software" — record it and pick up where handleNext left off.
+  async function confirmIdentity() {
+    setIdentityConfirmed(true);
+    setView("question");
+    const showed = await runCatalogChecks();
+    if (!showed) advanceFrom(stepIndex);
+  }
+
+  // "No / let me fix the name" — back to the name field, and allow a re-check.
+  function rejectIdentity() {
+    setIdentity(null);
+    setIdentityConfirmed(false);
+    setView("question");
+  }
+
   async function handleNext() {
     const group = STEPS[stepIndex];
     const groupErrors = {};
@@ -342,46 +416,27 @@ function IntakeForm({ onSubmitted }) {
     if (group.fields.includes("software_name")) {
       setPendingStepIndex(stepIndex + 1 >= STEPS.length ? STEPS.length : stepIndex + 1);
 
-      // 1) Instant keyword check for exact/alias hits (no network).
-      const matches = matchCatalog(form.software_name);
-      if (matches.length > 0) {
-        setCatalogMatches(matches);
-        setView("catalogMatch");
-        return;
+      // 0) Confirm we understood WHICH product this is ("Canva — online design
+      //    platform. Is that right?") before the rest of the form assumes it.
+      //    Skipped once confirmed so Back/Next doesn't re-ask.
+      if (!identityConfirmed) {
+        setChecking(true);
+        try {
+          const id = await identifySoftware(
+            form.software_name, form.use_description, form.vendor_website,
+          );
+          setIdentity(id);
+          setView("confirmSoftware");
+          return;
+        } catch {
+          // Identify unavailable — never block the requester; carry on.
+        } finally {
+          setChecking(false);
+        }
       }
 
-      // 2) Fuzzy/semantic check + approved alternatives via the LLM matcher.
-      //    Catches variants/typos/rebrands the keyword pass misses, and suggests
-      //    approved options when SDSU doesn't offer the requested tool.
-      setChecking(true);
-      try {
-        const r = await matchSoftware(form.software_name, form.use_description, SDSU_CATALOG);
-        if (r.status === "offered" && r.matched_name) {
-          const entry = SDSU_CATALOG.find((e) => e.name === r.matched_name);
-          if (entry) {
-            setCatalogMatches([entry]);
-            setView("catalogMatch");
-            return;
-          }
-        } else if (r.status === "alternative_available" && (r.alternatives || []).length > 0) {
-          const alts = r.alternatives
-            .map((a) => {
-              const entry = SDSU_CATALOG.find((e) => e.name === a.name);
-              return entry ? { ...entry, why: a.why } : null;
-            })
-            .filter(Boolean);
-          if (alts.length > 0) {
-            setAlternatives(alts);
-            setView("alternatives");
-            return;
-          }
-        }
-        // "not_found" (or nothing usable) — fall through and continue the request.
-      } catch {
-        // Matcher unavailable — never block the requester; just continue.
-      } finally {
-        setChecking(false);
-      }
+      const showed = await runCatalogChecks();
+      if (showed) return;
     }
 
     advanceFrom(stepIndex);
@@ -405,6 +460,8 @@ function IntakeForm({ onSubmitted }) {
     setErrors({});
     setCatalogMatches([]);
     setAlternatives([]);
+    setIdentity(null);
+    setIdentityConfirmed(false);
     setPendingStepIndex(null);
     setStepIndex(0);
     setSubmitError(null);
@@ -576,6 +633,56 @@ function IntakeForm({ onSubmitted }) {
     );
   }
 
+  // "Canva — online design platform. Is that right?"
+  // Two jobs: catch the wrong product early (Canva vs Canvas are one letter
+  // apart and unrelated), and capture what the software does for the reviewer,
+  // which is otherwise step 6 of their manual checklist.
+  function renderConfirmSoftware() {
+    const found = identity && identity.identified;
+    return (
+      <div style={styles.body}>
+        <div style={styles.catalogEyebrow}>
+          {found ? "Confirm the software" : "We couldn't find this one"}
+        </div>
+        <div style={styles.catalogHeading}>
+          {found ? "Is this the right software?" : `Is "${form.software_name}" spelled correctly?`}
+        </div>
+
+        {found ? (
+          <div style={styles.identityCard}>
+            <div style={styles.identityName}>{identity.canonical_name}</div>
+            <div style={styles.identityFunction}>{identity.one_liner}</div>
+            {identity.source_url && (
+              <a
+                href={identity.source_url}
+                target="_blank"
+                rel="noreferrer"
+                style={styles.catalogCardLink}
+              >
+                Where this came from →
+              </a>
+            )}
+          </div>
+        ) : (
+          <div style={styles.catalogSubheading}>
+            We looked online and couldn't find a software product by this name. That's fine for
+            specialized or in-house tools — but if it's a typo, fixing it now saves a round trip
+            with IT later.
+          </div>
+        )}
+
+        <div style={styles.catalogActions}>
+          <button type="button" onClick={confirmIdentity} style={styles.nextButton}>
+            {found ? "Yes, that's the software I need" : "The name is correct — continue"}
+          </button>
+          <button type="button" onClick={rejectIdentity} style={styles.continueLink}>
+            {found ? "No, that's not it — let me change the name" : "Let me fix the name"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   function renderCatalogMatch() {
     return (
       <div style={styles.body}>
@@ -731,6 +838,7 @@ function IntakeForm({ onSubmitted }) {
         </div>
 
         {view === "question" && renderQuestion()}
+        {view === "confirmSoftware" && renderConfirmSoftware()}
         {view === "catalogMatch" && renderCatalogMatch()}
         {view === "alternatives" && renderAlternatives()}
         {view === "ended" && renderEnded()}
@@ -1078,6 +1186,33 @@ const styles = {
     fontWeight: 700,
     textDecoration: "none",
     marginTop: "4px",
+  },
+  identityCard: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
+    borderTop: "3px solid var(--red)",
+    backgroundColor: "var(--paper)",
+    borderLeft: "1px solid var(--rule)",
+    borderRight: "1px solid var(--rule)",
+    borderBottom: "1px solid var(--rule)",
+    paddingTop: "16px",
+    paddingRight: "18px",
+    paddingBottom: "16px",
+    paddingLeft: "18px",
+    marginTop: "18px",
+    marginBottom: "4px",
+  },
+  identityName: {
+    fontSize: "20px",
+    fontWeight: 700,
+    color: "var(--ink)",
+    lineHeight: 1.2,
+  },
+  identityFunction: {
+    fontSize: "14px",
+    color: "var(--ink)",
+    lineHeight: 1.45,
   },
   altWhy: {
     fontSize: "12.5px",
