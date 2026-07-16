@@ -94,9 +94,15 @@ async def chatbot_patch_route(request: Request, request_id: str, background_task
 
 
 @app.post("/requests/{request_id}/security-report")
-async def security_report_route(request_id: str):
+async def security_report_route(request_id: str, background_tasks: BackgroundTasks):
     event = {"pathParameters": {"id": request_id}}
-    return _from_lambda_response(security_report.handler(event))
+    lambda_response = security_report.handler(event)
+    if lambda_response["statusCode"] == 202:
+        # handler() marked it pending and (in real Lambda only) fired the
+        # async worker invoke, which no-ops locally -- background it here
+        # instead so local dev still actually completes the report.
+        background_tasks.add_task(security_report.generate_and_save, request_id)
+    return _from_lambda_response(lambda_response)
 
 
 @app.patch("/requests/{request_id}/admin")
