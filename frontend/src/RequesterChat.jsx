@@ -360,20 +360,39 @@ export function evaluate(a) {
 // (it_review is built by answersToItReview() from itReview.js — the team's
 // shared mapper — so the shape stays consistent across the app.)
 
-// Guaranteed catch-all: strip any markdown the backend missed, so literal
-// **, __, `, ~~, or [text](url) never reach the screen.
-function cleanMd(s) {
-  return String(s || "")
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // [label](url) -> label
-    .replace(/\*\*/g, "")
-    .replace(/__/g, "")
-    .replace(/~~/g, "")
-    .replace(/`/g, "")
-    .replace(/(?<![\w*])\*(?=\S)([^*\n]+?)\*(?![\w*])/g, "$1"); // *italic* -> italic
+// Renders inline markdown within a single line: **bold**/__bold__,
+// *italic*/_italic_, and `inline code`. Returns an array of strings/nodes.
+// [label](url) links are stripped down to their label first -- the backend
+// occasionally leaks raw markdown links that should never reach the screen.
+function renderInline(text) {
+  const stripped = String(text || "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  const regex = /(\*\*|__)(.+?)\1|(`)(.+?)\3|(\*|_)(.+?)\5/g;
+  const nodes = [];
+  let lastIndex = 0;
+  let match;
+  let key = 0;
+  while ((match = regex.exec(stripped)) !== null) {
+    if (match.index > lastIndex) nodes.push(stripped.slice(lastIndex, match.index));
+    if (match[1]) {
+      nodes.push(<strong key={key++}>{match[2]}</strong>);
+    } else if (match[3]) {
+      nodes.push(
+        <code key={key++} style={styles.inlineCode}>
+          {match[4]}
+        </code>
+      );
+    } else if (match[5]) {
+      nodes.push(<em key={key++}>{match[6]}</em>);
+    }
+    lastIndex = regex.lastIndex;
+  }
+  if (lastIndex < stripped.length) nodes.push(stripped.slice(lastIndex));
+  return nodes;
 }
 
 // Renders a bot message as readable text: numbered/bulleted lines become an
-// indented list with a red marker; blank lines become spacing.
+// indented list with a red marker; blank lines become spacing; inline
+// markdown (bold/italic/code) is rendered within each line.
 function BotText({ text }) {
   const lines = String(text || "").split("\n");
   return (
@@ -385,7 +404,7 @@ function BotText({ text }) {
           return (
             <div key={i} style={styles.botListItem}>
               <span style={styles.botListMarker}>{num[1]}.</span>
-              <span>{cleanMd(num[2])}</span>
+              <span>{renderInline(num[2])}</span>
             </div>
           );
         }
@@ -393,14 +412,14 @@ function BotText({ text }) {
           return (
             <div key={i} style={styles.botListItem}>
               <span style={styles.botListMarker}>•</span>
-              <span>{cleanMd(bullet[1])}</span>
+              <span>{renderInline(bullet[1])}</span>
             </div>
           );
         }
         if (line.trim() === "") return <div key={i} style={{ height: "7px" }} />;
         return (
           <div key={i} style={{ marginBottom: "2px" }}>
-            {cleanMd(line)}
+            {renderInline(line)}
           </div>
         );
       })}
@@ -732,7 +751,7 @@ function RequesterChat({ requestId }) {
           <React.Fragment>
             <div style={styles.dotsWrap}>
               {visible.map((s, i) => (
-                <div key={s.id} style={styles.dotUnit}>
+                <div key={s.id} style={{ ...styles.dotUnit, flex: i < visible.length - 1 ? 1 : "0 0 auto" }}>
                   <div
                     style={{
                       ...styles.dot,
@@ -905,23 +924,15 @@ function RequesterChat({ requestId }) {
 
 const styles = {
   page: {
-    minHeight: "100vh",
+    height: "100vh",
     display: "flex",
-    justifyContent: "center",
-    alignItems: "center",
-    padding: "24px 20px",
     boxSizing: "border-box",
   },
   card: {
-    width: "75%",
-    maxWidth: "1000px",
-    minWidth: "320px",
-    height: "88vh",
+    width: "100%",
+    height: "100%",
     background: "#FFFFFF",
-    border: "1px solid var(--line)",
-    borderRadius: "14px",
     overflow: "hidden",
-    boxShadow: "0 1px 2px rgba(0,0,0,0.04), 0 16px 40px rgba(0,0,0,0.12)",
     display: "flex",
     flexDirection: "column",
   },
@@ -1056,6 +1067,14 @@ const styles = {
     fontWeight: 700,
     minWidth: "18px",
     flexShrink: 0,
+  },
+  inlineCode: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "0.9em",
+    background: "var(--paper-alt)",
+    border: "1px solid var(--line)",
+    borderRadius: "3px",
+    padding: "1px 5px",
   },
   orChoose: {
     padding: "14px 28px 6px",

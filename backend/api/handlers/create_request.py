@@ -48,6 +48,11 @@ def handler(event, context=None):
                 "security_flag": None,
                 "integration_flag": None,
             },
+            "review_completions": {
+                "ati_flag": False,
+                "security_flag": False,
+                "integration_flag": False,
+            },
             "override_reason": "",
             "overridden_by": "",
             "admin_notes": "",

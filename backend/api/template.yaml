@@ -2,11 +2,14 @@ AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >
   SoftwareRequests API -- intake/chatbot/admin CRUD, Bedrock-powered chatbot
-  parsing, and the async security-report pipeline (fetch documents, call
-  Bedrock, archive to S3). CodeUri is the repo's backend/ folder (one level
-  up from this template) so handlers/ and chatbot/ deploy together as
-  siblings, matching the relative-path sys.path trick the handlers already
-  use locally -- see backend/api/handlers/security_report.py and friends.
+  parsing, the async security-report pipeline (fetch documents, call Bedrock,
+  archive to S3), and S3-triggered review document handling. CodeUri is the
+  repo's backend/ folder (one level up from this template) so handlers/ and
+  chatbot/ deploy together as siblings, matching the relative-path sys.path
+  trick the handlers already use locally -- see
+  backend/api/handlers/security_report.py and friends.
+  The S3EventFunction trigger is wired after deploy via AWS CLI because the
+  bucket already exists and SAM cannot attach notifications to pre-existing buckets.
 
 Parameters:
   SoftwareRequestsTableName:
@@ -18,6 +21,11 @@ Parameters:
     Description: S3 bucket for archived review documents (DataStored/<request_id>/...).
     Default: dxhub-camp-2026-sdsu-software-request-and-institutional-c7fe61
 
+  ReviewDocsBucketName:
+    Type: String
+    Description: Name of the existing S3 bucket holding reviewer-uploaded documents.
+    Default: dxhub-camp-2026-sdsu-software-request-and-institutional-c7fe61
+
 Globals:
   Function:
     Runtime: python3.12
@@ -26,8 +34,11 @@ Globals:
     Environment:
       Variables:
         TABLE_NAME: !Ref SoftwareRequestsTableName
+        REVIEW_DOCS_BUCKET: !Ref ReviewDocsBucketName
 
 Resources:
+
+  # ── API Gateway ───────────────────────────────────────────────────────────────
   SoftwareRequestsApi:
     Type: AWS::Serverless::Api
     Properties:
@@ -264,7 +275,51 @@ Resources:
         Variables:
           DATA_BUCKET: !Ref DataBucketName
 
+  # ── Review Documents: S3 event Lambda ────────────────────────────────────────
+  # Trigger is wired manually after deploy (see deploy instructions) because
+  # SAM cannot attach event notifications to a pre-existing bucket.
+  S3EventFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ..
+      Handler: api.handlers.s3_event_handler.handler
+      Timeout: 30
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SoftwareRequestsTableName
+        - S3ReadPolicy:
+            BucketName: !Ref ReviewDocsBucketName
+
+  # ── Review Documents: API endpoint ───────────────────────────────────────────
+  ReviewDocsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ..
+      Handler: api.handlers.get_review_docs.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SoftwareRequestsTableName
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:ListBucket
+              Resource:
+                - !Sub "arn:aws:s3:::${ReviewDocsBucketName}"
+                - !Sub "arn:aws:s3:::${ReviewDocsBucketName}/DataStored/*"
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SoftwareRequestsApi
+            Path: /requests/{id}/review-docs
+            Method: GET
+
 Outputs:
   ApiBaseUrl:
     Description: Base URL for the deployed API
     Value: !Sub "https://${SoftwareRequestsApi}.execute-api.${AWS::Region}.amazonaws.com/dev/"
+
+  S3EventFunctionArn:
+    Description: ARN of the S3 event Lambda (needed to wire the S3 trigger)
+    Value: !GetAtt S3EventFunction.Arn

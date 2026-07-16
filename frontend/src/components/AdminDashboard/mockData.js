@@ -3,6 +3,7 @@
 
 export const MOCK_REQUESTS = [
   // --- Low-risk renewal, no flags ---
+  // All three reviews still pending — no uploads yet.
   {
     request_id: "aaa-001",
     status: "ITReview",
@@ -59,9 +60,15 @@ export const MOCK_REQUESTS = [
       overridden_by: "",
       admin_notes: "",
     },
+    review_docs: {
+      ati:         { status: "pending", message: "Review in progress, gathering documents", files: [] },
+      itso:        { status: "pending", message: "Review in progress, gathering documents", files: [] },
+      integration: { status: "pending", message: "Review in progress, gathering documents", files: [] },
+    },
   },
 
   // --- High-risk new software, all three flags triggered ---
+  // ATI + ITSO have documents uploaded; Integration completed with no documents.
   {
     request_id: "bbb-002",
     status: "AdditionalReview",
@@ -110,17 +117,42 @@ export const MOCK_REQUESTS = [
       security_flag_reason: "Level 1 data: HIPAA, PII",
       integration_flag: true,
       integration_flag_reason: "Shares data with campus system: PeopleSoft student information system",
+      ai_flag: true,
+      ai_flag_reason: "AI-enabled automated decision system — California ADS inventory (AB 302)",
       risk_level: "High",
     },
     admin: {
       overrides: { ati_flag: null, security_flag: null, integration_flag: null },
+      // ITSO review already done; ATI + Integration still open.
+      review_completions: { ati_flag: false, security_flag: true, integration_flag: false },
       override_reason: "",
       overridden_by: "",
       admin_notes: "",
     },
+    review_docs: {
+      ati: {
+        status: "complete",
+        message: null,
+        files: [
+          { name: "privacy_policy.pdf", url: "https://example.s3.amazonaws.com/presigned/privacy_policy.pdf" },
+          { name: "vpat.pdf",           url: "https://example.s3.amazonaws.com/presigned/vpat.pdf" },
+        ],
+      },
+      itso: {
+        status: "complete",
+        message: null,
+        files: [
+          { name: "hecvat.pdf",           url: "https://example.s3.amazonaws.com/presigned/hecvat.pdf" },
+          { name: "soc2.pdf",             url: "https://example.s3.amazonaws.com/presigned/soc2.pdf" },
+          { name: "terms_of_service.pdf", url: "https://example.s3.amazonaws.com/presigned/terms_of_service.pdf" },
+        ],
+      },
+      integration: { status: "no_docs", message: "No documents found", files: [] },
+    },
   },
 
   // --- Medium-risk classroom tool, ATI + Security triggered, no integration ---
+  // ITSO uploaded but no files (contact vendor); ATI and Integration still pending.
   {
     request_id: "ccc-003",
     status: "Submitted",
@@ -177,12 +209,15 @@ export const MOCK_REQUESTS = [
       overridden_by: "",
       admin_notes: "",
     },
+    review_docs: {
+      ati:         { status: "pending", message: "Review in progress, gathering documents", files: [] },
+      itso:        { status: "no_docs", message: "No documents found. Contact vendor", files: [] },
+      integration: { status: "pending", message: "Review in progress, gathering documents", files: [] },
+    },
   },
 
   // --- Approved: ATI concern cleared via staff override ---
-  // Demonstrates a staff override: the rules engine flagged ATI, but a
-  // reviewer cleared it -- the dashboard should show the overridden (Clear)
-  // value, not the raw computed (Flagged) one.
+  // All reviews complete with documents.
   {
     request_id: "ddd-004",
     status: "Approved",
@@ -239,9 +274,27 @@ export const MOCK_REQUESTS = [
       overridden_by: "jsmith@sdsu.edu",
       admin_notes: "ATI concern addressed via override. Approved — proceeds to Procurement outside this system.",
     },
+    review_docs: {
+      ati: {
+        status: "complete",
+        message: null,
+        files: [
+          { name: "vpat.pdf", url: "https://example.s3.amazonaws.com/presigned/vpat_stackmap.pdf" },
+        ],
+      },
+      itso: {
+        status: "complete",
+        message: null,
+        files: [
+          { name: "soc2.pdf", url: "https://example.s3.amazonaws.com/presigned/soc2_stackmap.pdf" },
+        ],
+      },
+      integration: { status: "no_docs", message: "No documents found", files: [] },
+    },
   },
 
   // --- In additional review: shares data with a campus system (integration) ---
+  // Integration has a document; ATI and ITSO still pending (not flagged).
   {
     request_id: "eee-005",
     status: "AdditionalReview",
@@ -298,9 +351,21 @@ export const MOCK_REQUESTS = [
       overridden_by: "",
       admin_notes: "Integration Services confirming read-only PeopleSoft access scope.",
     },
+    review_docs: {
+      ati:  { status: "pending", message: "Review in progress, gathering documents", files: [] },
+      itso: { status: "pending", message: "Review in progress, gathering documents", files: [] },
+      integration: {
+        status: "complete",
+        message: null,
+        files: [
+          { name: "architecture_notes.pdf", url: "https://example.s3.amazonaws.com/presigned/arch_docusign.pdf" },
+        ],
+      },
+    },
   },
 
   // --- Denied: security review did not pass ---
+  // ITSO completed with no documents; others pending.
   {
     request_id: "fff-006",
     status: "Denied",
@@ -357,9 +422,15 @@ export const MOCK_REQUESTS = [
       overridden_by: "",
       admin_notes: "No SOC 2, unresolved CVEs, no privacy policy on file. Vendor risk review failed — request denied.",
     },
+    review_docs: {
+      ati:         { status: "pending", message: "Review in progress, gathering documents", files: [] },
+      itso:        { status: "no_docs", message: "No documents found. Contact vendor", files: [] },
+      integration: { status: "pending", message: "Review in progress, gathering documents", files: [] },
+    },
   },
 
   // --- In additional review: 100+ users, public-facing scope (ATI) ---
+  // ATI has no docs yet; ITSO and Integration still pending.
   {
     request_id: "ggg-007",
     status: "AdditionalReview",
@@ -408,13 +479,21 @@ export const MOCK_REQUESTS = [
       security_flag_reason: "No Level 1 or Level 2 data identified",
       integration_flag: false,
       integration_flag_reason: "No campus system integration required",
+      ai_flag: false,
+      ai_flag_reason: "No AI capabilities reported",
       risk_level: "Low",
     },
     admin: {
       overrides: { ati_flag: null, security_flag: null, integration_flag: null },
+      review_completions: { ati_flag: false, security_flag: false, integration_flag: false },
       override_reason: "",
       overridden_by: "",
       admin_notes: "Awaiting ATI coordinator sign-off on kiosk screen-reader support.",
+    },
+    review_docs: {
+      ati:         { status: "no_docs", message: "No documents found. Contact vendor", files: [] },
+      itso:        { status: "pending", message: "Review in progress, gathering documents", files: [] },
+      integration: { status: "pending", message: "Review in progress, gathering documents", files: [] },
     },
   },
 ];

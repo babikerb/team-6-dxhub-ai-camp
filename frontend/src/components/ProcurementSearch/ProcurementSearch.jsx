@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getRequestByProcurementId } from "./api.js";
 import {
@@ -8,16 +8,20 @@ import {
 } from "../AdminDashboard/statusConfig.js";
 import { effectiveFlags } from "../AdminDashboard/flagsUtil.js";
 
-const REVIEW_TYPE_LABELS = { ati: "ATI", security: "Security", integration: "Integration" };
+// ITSO = the security review; the underlying data key remains security_flag.
+const REVIEW_TYPE_LABELS = { ati: "ATI Review", security: "ITSO Review", integration: "Integration Review" };
 
-// Which of the parallel reviews (ATI/Security/Integration) actually apply —
+const GREEN = "#2E7D32"; // review completed
+
+// Which of the parallel reviews (ATI/ITSO/Integration) actually apply —
 // these run independently, not one after another, so a request can need any
 // combination of them at once during the single "Additional Review" stage.
+// Each entry carries whether staff already completed that review.
 function applicableReviews(record) {
   const effective = effectiveFlags(record.flags || {}, record.admin);
   return Object.entries(REVIEW_TYPE_LABELS)
     .filter(([key]) => effective[key].value)
-    .map(([, label]) => label);
+    .map(([key, label]) => ({ key, label, completed: effective[key].completed }));
 }
 
 // A request with no flags at all skips Additional Review entirely and goes
@@ -36,6 +40,16 @@ function formatDate(iso) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+// estimated_days_remaining is null once a decision's been made, or if we
+// don't have enough info (e.g. risk level not yet computed) to estimate.
+function formatEta(record) {
+  if (record.status === "Approved" || record.status === "Denied") return "Decision made";
+  const days = record.estimated_days_remaining;
+  if (days === null || days === undefined) return "—";
+  if (days <= 0) return "Any day now";
+  return days === 1 ? "About 1 day" : `About ${days} days`;
 }
 
 function DetailRow({ label, value }) {
@@ -62,7 +76,7 @@ function StatusStepper({ record }) {
     <div style={styles.stepper}>
       <div style={styles.dotsWrap}>
         {steps.map((s, i) => (
-          <div key={s} style={styles.dotUnit}>
+          <div key={s} style={{ ...styles.dotUnit, flex: i < steps.length - 1 ? 1 : "0 0 auto" }}>
             <div
               style={{
                 ...styles.dot,
@@ -87,6 +101,9 @@ function StatusStepper({ record }) {
             key={s}
             style={{
               ...styles.stepLabel,
+              flex: i < steps.length - 1 ? 1 : "0 0 auto",
+              paddingRight: i < steps.length - 1 ? styles.stepLabel.paddingRight : 0,
+              textAlign: i < steps.length - 1 ? "left" : "right",
               color: i === position ? "var(--ink)" : "var(--stone)",
               fontWeight: i === position ? 700 : 500,
             }}
@@ -97,9 +114,6 @@ function StatusStepper({ record }) {
       </div>
       <div style={styles.stepCaption}>
         You're here: <strong>{STATUS_STEPPER_LABELS[record.status] || record.status}</strong>
-        {record.status === "AdditionalReview" && reviews.length > 0 && (
-          <> ({reviews.join(", ")})</>
-        )}
         {next && (
           <>
             {" "}
@@ -107,6 +121,31 @@ function StatusStepper({ record }) {
           </>
         )}
       </div>
+      {reviews.length > 0 && (
+        <div style={styles.reviewList}>
+          <div style={styles.reviewListTitle}>Additional reviews for this request</div>
+          {reviews.map((review) => (
+            <div key={review.key} style={styles.reviewItem}>
+              <span
+                style={{
+                  ...styles.reviewDot,
+                  background: review.completed ? GREEN : "transparent",
+                  borderColor: review.completed ? GREEN : "var(--stone-light)",
+                }}
+              />
+              <span style={styles.reviewName}>{review.label}</span>
+              <span
+                style={{
+                  ...styles.reviewState,
+                  color: review.completed ? GREEN : "var(--stone)",
+                }}
+              >
+                {review.completed ? "Completed ✓" : "Remaining"}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -117,6 +156,25 @@ function ProcurementSearch() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [record, setRecord] = useState(null);
+
+  // While a result is on screen, quietly re-fetch it so admin-side changes
+  // (flag overrides, review completions, status moves) show up without the
+  // user having to search again. Transient failures keep the last good result.
+  const activeId = record?.request_id;
+  useEffect(() => {
+    if (!activeId) return undefined;
+    const timer = setInterval(async () => {
+      try {
+        const fresh = await getRequestByProcurementId(activeId);
+        setRecord((current) =>
+          current && current.request_id === activeId ? fresh : current
+        );
+      } catch {
+        // ignore — poll again on the next tick
+      }
+    }, 12000);
+    return () => clearInterval(timer);
+  }, [activeId]);
 
   async function handleSearch() {
     const trimmed = procurementId.trim();
@@ -188,6 +246,7 @@ function ProcurementSearch() {
                 <DetailRow label="Department" value={record.requestor?.department} />
                 <DetailRow label="Submitted" value={formatDate(record.created_at)} />
                 <DetailRow label="Last updated" value={formatDate(record.updated_at)} />
+                <DetailRow label="Estimated time left" value={formatEta(record)} />
               </div>
 
               <button type="button" onClick={searchAnother} style={styles.searchButton}>
@@ -207,22 +266,16 @@ function ProcurementSearch() {
 
 const styles = {
   page: {
-    minHeight: "100vh",
+    height: "100vh",
     display: "flex",
-    justifyContent: "center",
-    alignItems: "flex-start",
-    padding: "40px 20px",
     fontFamily: "'IBM Plex Sans', sans-serif",
     boxSizing: "border-box",
   },
   card: {
     width: "100%",
-    maxWidth: "520px",
+    height: "100%",
     background: "#FFFFFF",
-    border: "1px solid var(--line)",
-    borderRadius: "14px",
-    boxShadow: "0 1px 2px rgba(0,0,0,0.04), 0 16px 40px rgba(0,0,0,0.12)",
-    overflow: "hidden",
+    overflow: "auto",
   },
   header: {
     display: "flex",
@@ -230,6 +283,9 @@ const styles = {
     gap: "14px",
     padding: "18px 24px",
     background: "var(--ink)",
+    position: "sticky",
+    top: 0,
+    zIndex: 1,
   },
   headerBadge: {
     background: "var(--red)",
@@ -373,6 +429,51 @@ const styles = {
     fontFamily: "'IBM Plex Mono', monospace",
     fontSize: "11.5px",
     color: "var(--stone)",
+  },
+  reviewList: {
+    marginTop: "10px",
+    padding: "10px 12px",
+    background: "var(--paper-alt)",
+    border: "1px solid var(--line)",
+    borderRadius: "6px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
+  },
+  reviewListTitle: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "10px",
+    fontWeight: 700,
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+    color: "var(--stone)",
+    marginBottom: "2px",
+  },
+  reviewItem: {
+    display: "flex",
+    alignItems: "center",
+    gap: "8px",
+  },
+  reviewDot: {
+    width: "8px",
+    height: "8px",
+    borderRadius: "50%",
+    border: "1.5px solid var(--stone-light)",
+    flexShrink: 0,
+    boxSizing: "content-box",
+  },
+  reviewName: {
+    flex: 1,
+    fontSize: "12.5px",
+    fontWeight: 600,
+    color: "var(--ink)",
+  },
+  reviewState: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "10.5px",
+    fontWeight: 700,
+    textTransform: "uppercase",
+    letterSpacing: "0.04em",
   },
   deniedBanner: {
     fontFamily: "'IBM Plex Mono', monospace",

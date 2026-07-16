@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
 import { MOCK_REQUESTS } from './mockData.js';
 import AdminDashboard from './AdminDashboard.jsx';
 import RequestDetail from './RequestDetail.jsx';
@@ -7,9 +7,10 @@ import RequestDetail from './RequestDetail.jsx';
 vi.mock('../../api.js', () => ({
   listRequests: vi.fn(),
   patchAdmin: vi.fn(),
+  getReviewDocs: vi.fn(),
 }));
 
-import { listRequests, patchAdmin } from '../../api.js';
+import { listRequests, patchAdmin, getReviewDocs } from '../../api.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -26,6 +27,12 @@ beforeEach(() => {
       },
       updated_at: new Date().toISOString(),
     };
+  });
+  // Return the review_docs already on each mock record so the live fetch
+  // matches what the table expects.
+  getReviewDocs.mockImplementation(async (requestId) => {
+    const record = MOCK_REQUESTS.find((r) => r.request_id === requestId);
+    return { request_id: requestId, review_docs: record?.review_docs ?? {} };
   });
 });
 
@@ -129,6 +136,93 @@ describe('AdminDashboard — list view', () => {
     expect(screen.getAllByText('CampusHealth360').length).toBeGreaterThan(1);
     expect(screen.getByText(/requestor information/i)).toBeInTheDocument();
   });
+
+  it('labels the security flag pill ITSO (not SEC)', async () => {
+    await renderDashboard();
+    expect(screen.getAllByText('ITSO').length).toBe(MOCK_REQUESTS.length);
+    expect(screen.queryByText('SEC')).not.toBeInTheDocument();
+  });
+
+  it('renders an AI/ADS pill for every request', async () => {
+    await renderDashboard();
+    expect(screen.getAllByText('AI').length).toBe(MOCK_REQUESTS.length);
+  });
+
+  it('filters requests by AI/ADS flag', async () => {
+    await renderDashboard();
+    const select = screen.getByLabelText('Filter by flag');
+    fireEvent.change(select, { target: { value: 'ai' } });
+    // Only CampusHealth360 has ai_flag: true in the mock data.
+    expect(screen.getByText('CampusHealth360')).toBeInTheDocument();
+    expect(screen.queryByText('AutoCAD LT')).not.toBeInTheDocument();
+    expect(screen.queryByText('ResearchTrack Pro')).not.toBeInTheDocument();
+  });
+
+  it('marks a flagged-and-completed review with a "Review completed" pill', async () => {
+    await renderDashboard();
+    // bbb-002 has security_flag true + review_completions.security_flag true
+    expect(screen.getAllByTitle('Review completed').length).toBeGreaterThan(0);
+  });
+
+  it('renders the color legend', async () => {
+    await renderDashboard();
+    expect(screen.getByText('Not flagged')).toBeInTheDocument();
+    expect(screen.getByText('Review remaining')).toBeInTheDocument();
+    expect(screen.getByText('Review completed')).toBeInTheDocument();
+    expect(screen.getByText('* Staff override')).toBeInTheDocument();
+  });
+
+  it('renders unknown legacy statuses without crashing', async () => {
+    const legacy = {
+      ...MOCK_REQUESTS[0],
+      request_id: 'zzz-legacy',
+      status: 'FLAGSCOMPUTED',
+      requestor: { ...MOCK_REQUESTS[0].requestor, software_name: 'LegacyTool' },
+    };
+    listRequests.mockResolvedValue({ items: [legacy], count: 1 });
+    render(<AdminDashboard />);
+    await waitFor(() => expect(screen.getByText('LegacyTool')).toBeInTheDocument());
+    expect(screen.getByText('FLAGSCOMPUTED')).toBeInTheDocument();
+  });
+});
+
+// ── AdminDashboard — sorting ─────────────────────────────────────────────────
+
+describe('AdminDashboard — sorting', () => {
+  function firstRowText() {
+    // Row 0 is the header row.
+    return screen.getAllByRole('row')[1].textContent;
+  }
+
+  it('sorts newest first by default', async () => {
+    await renderDashboard();
+    expect(firstRowText()).toContain('AutoCAD LT'); // created 2026-07-14T14:00
+  });
+
+  it('sorts oldest first when selected', async () => {
+    await renderDashboard();
+    fireEvent.change(screen.getByLabelText('Sort by'), { target: { value: 'oldest' } });
+    expect(firstRowText()).toContain('QuickShare Cloud Drive'); // created 2026-06-15
+  });
+
+  it('sorts by risk High → Low when selected', async () => {
+    await renderDashboard();
+    fireEvent.change(screen.getByLabelText('Sort by'), { target: { value: 'risk' } });
+    // Both High-risk records first; CampusHealth360 is the newer of the two.
+    expect(firstRowText()).toContain('CampusHealth360');
+  });
+
+  it('sorts by department A–Z when selected', async () => {
+    await renderDashboard();
+    fireEvent.change(screen.getByLabelText('Sort by'), { target: { value: 'department' } });
+    expect(firstRowText()).toContain('CampusTour VR'); // Admissions
+  });
+
+  it('sorts by software name A–Z when selected', async () => {
+    await renderDashboard();
+    fireEvent.change(screen.getByLabelText('Sort by'), { target: { value: 'software' } });
+    expect(firstRowText()).toContain('AutoCAD LT');
+  });
 });
 
 // ── RequestDetail — flag display ──────────────────────────────────────────────
@@ -180,6 +274,47 @@ describe('RequestDetail — flag display', () => {
     expect(computedLabels.length).toBe(3);
     const overrideLabels = screen.getAllByText('Override');
     expect(overrideLabels.length).toBe(6);
+  });
+});
+
+// ── RequestDetail — review completion ─────────────────────────────────────────
+
+describe('RequestDetail — review completion', () => {
+  const highRiskRequest = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
+  const lowRiskRequest = MOCK_REQUESTS.find((r) => r.request_id === 'aaa-001');
+  const noop = vi.fn();
+
+  it('shows the saved completion state per review', () => {
+    render(<RequestDetail request={highRiskRequest} onClose={noop} onSaved={noop} />);
+    expect(screen.getByTestId('complete-itso-review').textContent).toMatch(/Completed/);
+    expect(screen.getByTestId('complete-ati-review').textContent).toBe('Remaining');
+    expect(screen.getByTestId('complete-integration-review').textContent).toBe('Remaining');
+  });
+
+  it('disables the completion toggle when the review does not apply', () => {
+    render(<RequestDetail request={lowRiskRequest} onClose={noop} onSaved={noop} />);
+    expect(screen.getByTestId('complete-ati-review')).toBeDisabled();
+    expect(screen.getByTestId('complete-itso-review')).toBeDisabled();
+  });
+
+  it('includes review_completions in the save payload', async () => {
+    const onSaved = vi.fn();
+    render(<RequestDetail request={highRiskRequest} onClose={noop} onSaved={onSaved} />);
+
+    fireEvent.click(screen.getByTestId('complete-ati-review'));
+    fireEvent.click(screen.getByText('Save changes'));
+
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(patchAdmin).toHaveBeenCalledWith(
+      'bbb-002',
+      expect.objectContaining({
+        review_completions: {
+          ati_flag: true,
+          security_flag: true,
+          integration_flag: false,
+        },
+      })
+    );
   });
 });
 
@@ -294,5 +429,126 @@ describe('RequestDetail — override validation', () => {
     expect(savedArg.admin.override_reason).toBe(
       'Business justification provided by department head.'
     );
+  });
+});
+
+
+// ── AdminDashboard — review document columns ──────────────────────────────────
+
+describe('AdminDashboard — review document columns', () => {
+  it('renders Review Docs column header', async () => {
+    await renderDashboard();
+    expect(screen.getByText('Review Docs')).toBeInTheDocument();
+  });
+
+  it('shows "pending" text for requests with no review docs (aaa-001)', async () => {
+    await renderDashboard();
+    // aaa-001 has all three as pending
+    const pendingText = screen.getAllByTitle('Review in progress, gathering documents');
+    expect(pendingText.length).toBeGreaterThan(0);
+    expect(screen.getAllByText('ATI:').length).toBeGreaterThan(0);
+  });
+
+  it('shows "no docs" text for ITSO no_docs state (ccc-003)', async () => {
+    await renderDashboard();
+    expect(screen.getAllByText('ITSO:').length).toBeGreaterThan(0);
+    const noDocsText = screen.getAllByText('no docs');
+    expect(noDocsText.length).toBeGreaterThan(0);
+  });
+
+  it('shows "no docs" text for Integration no_docs state (bbb-002)', async () => {
+    await renderDashboard();
+    expect(screen.getAllByText('INT:').length).toBeGreaterThan(0);
+    const noDocsText = screen.getAllByText('no docs');
+    expect(noDocsText.length).toBeGreaterThan(0);
+  });
+
+  it('shows a download link for the first ATI doc only (bbb-002 has privacy_policy.pdf and vpat.pdf)', async () => {
+    await renderDashboard();
+    // Only the first file per review type is linked in the table row —
+    // the rest are available from the detail panel. Scope to bbb-002's row
+    // since other mock records reuse filenames like "vpat.pdf" for their own first file.
+    const row = screen.getByText('CampusHealth360').closest('tr');
+    expect(within(row).getByLabelText('Download privacy_policy.pdf')).toBeInTheDocument();
+    expect(within(row).queryByLabelText('Download vpat.pdf')).not.toBeInTheDocument();
+  });
+
+  it('shows a download link for the first ITSO doc only (bbb-002 has hecvat.pdf)', async () => {
+    await renderDashboard();
+    const row = screen.getByText('CampusHealth360').closest('tr');
+    expect(within(row).getByLabelText('Download hecvat.pdf')).toBeInTheDocument();
+    expect(within(row).queryByLabelText('Download soc2.pdf')).not.toBeInTheDocument();
+    expect(within(row).queryByLabelText('Download terms_of_service.pdf')).not.toBeInTheDocument();
+  });
+
+  it('download link href matches the presigned URL in mock data', async () => {
+    await renderDashboard();
+    const links = screen.getAllByLabelText('Download privacy_policy.pdf');
+    const hrefs = links.map((l) => l.getAttribute('href'));
+    expect(hrefs).toContain('https://example.s3.amazonaws.com/presigned/privacy_policy.pdf');
+  });
+
+  it('download links open in a new tab (target=_blank)', async () => {
+    await renderDashboard();
+    const links = screen.getAllByLabelText('Download privacy_policy.pdf');
+    links.forEach((l) => expect(l.getAttribute('target')).toBe('_blank'));
+  });
+});
+
+// ── RequestDetail — review documents section ──────────────────────────────────
+
+describe('RequestDetail — review documents section', () => {
+  const noop = vi.fn();
+
+  it('renders the Review Documents section heading', () => {
+    const req = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
+    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
+    expect(screen.getByText('Review Documents')).toBeInTheDocument();
+  });
+
+  it('shows ATI Docs, ITSO Docs, and Integration Docs row labels', () => {
+    const req = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
+    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
+    expect(screen.getByText('ATI Docs')).toBeInTheDocument();
+    expect(screen.getByText('ITSO Docs')).toBeInTheDocument();
+    expect(screen.getByText('Integration Docs')).toBeInTheDocument();
+  });
+
+  it('shows download links for complete ATI docs in the detail panel', () => {
+    const req = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
+    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
+    // bbb-002 has ATI complete with vpat.pdf and privacy_policy.pdf
+    const links = screen.getAllByLabelText(/Download vpat\.pdf/i);
+    expect(links.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('shows "No documents found" for Integration no_docs in detail panel (bbb-002)', () => {
+    const req = MOCK_REQUESTS.find((r) => r.request_id === 'bbb-002');
+    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
+    expect(screen.getAllByText('No documents found').length).toBeGreaterThan(0);
+  });
+
+  it('shows "Review in progress, gathering documents" for pending type in detail panel', () => {
+    const req = MOCK_REQUESTS.find((r) => r.request_id === 'aaa-001');
+    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
+    const pending = screen.getAllByText('Review in progress, gathering documents');
+    // aaa-001 has all three pending
+    expect(pending.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('shows "No documents found. Contact vendor" for ITSO no_docs (ccc-003)', () => {
+    const req = MOCK_REQUESTS.find((r) => r.request_id === 'ccc-003');
+    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
+    expect(screen.getAllByText('No documents found. Contact vendor').length).toBeGreaterThan(0);
+  });
+
+  it('shows pending state for all three types when review_docs is absent', () => {
+    const req = {
+      ...MOCK_REQUESTS[0],
+      review_docs: undefined,
+    };
+    render(<RequestDetail request={req} onClose={noop} onSaved={noop} />);
+    const pending = screen.getAllByText('Review in progress, gathering documents');
+    expect(pending.length).toBeGreaterThanOrEqual(3);
   });
 });

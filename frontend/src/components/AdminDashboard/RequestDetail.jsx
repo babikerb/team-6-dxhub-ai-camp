@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getRequest, patchAdmin, regenerateSecurityReport } from "../../api.js";
-import { STATUS_ORDER, STATUS_LABELS, STATUS_DESCRIPTIONS, statusColor } from "./statusConfig.js";
+import { STATUS_ORDER, STATUS_LABELS, STATUS_DESCRIPTIONS } from "./statusConfig.js";
 
 // ── Design tokens (matches RequesterChat.jsx / IntakeForm.jsx palette + type system) ──
 const C = {
@@ -22,6 +22,12 @@ const DEFAULT_OVERRIDES = {
   ati_flag: null,
   security_flag: null,
   integration_flag: null,
+};
+
+const DEFAULT_COMPLETIONS = {
+  ati_flag: false,
+  security_flag: false,
+  integration_flag: false,
 };
 
 function riskColor(level) {
@@ -61,7 +67,16 @@ function Field({ label, value }) {
 }
 
 // ── Flag row: shows computed flag + override side by side ─────────────────────
-function FlagRow({ label, computedValue, computedReason, overrideValue, onToggle }) {
+function FlagRow({
+  flagKey,
+  label,
+  computedValue,
+  computedReason,
+  overrideValue,
+  onToggle,
+  completed,
+  onToggleCompleted,
+}) {
   const effective = overrideValue !== null ? overrideValue : computedValue;
   const isOverridden = overrideValue !== null;
 
@@ -104,6 +119,34 @@ function FlagRow({ label, computedValue, computedReason, overrideValue, onToggle
           </span>
         </div>
 
+        {/* Review completion — only meaningful while the review actually applies */}
+        <div style={styles.flagCell}>
+          <div style={styles.flagCellLabel}>Review</div>
+          <button
+            data-testid={`complete-${label.replace(/\s+/g, '-').toLowerCase()}`}
+            type="button"
+            disabled={!effective}
+            title={
+              !effective
+                ? "This review does not apply (flag is clear)"
+                : completed
+                ? "Click to mark this review as still remaining"
+                : "Click to mark this review as completed"
+            }
+            style={{
+              ...styles.completeButton,
+              background: effective && completed ? "#2E7D32" : C.white,
+              color: effective && completed ? C.white : C.ink,
+              border: effective && completed ? "none" : `1.5px solid ${C.line}`,
+              opacity: effective ? 1 : 0.45,
+              cursor: effective ? "pointer" : "not-allowed",
+            }}
+            onClick={() => onToggleCompleted(flagKey)}
+          >
+            {completed ? "Completed ✓" : "Remaining"}
+          </button>
+        </div>
+
         {/* Toggle button */}
         <button
           data-testid={`toggle-${label.replace(/\s+/g, '-').toLowerCase()}`}
@@ -113,7 +156,7 @@ function FlagRow({ label, computedValue, computedReason, overrideValue, onToggle
             color: overrideValue !== null ? C.white : C.ink,
             border: overrideValue !== null ? "none" : `1.5px solid ${C.line}`,
           }}
-          onClick={() => onToggle(label)}
+          onClick={() => onToggle(flagKey)}
           type="button"
         >
           {overrideValue === null
@@ -161,6 +204,100 @@ function SourceRow({ source }) {
           ({SOURCE_LABELS[source.source] || source.source})
         </span>
       </span>
+    </div>
+  );
+}
+
+const rdStyles = {
+  reviewRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: "12px",
+    padding: "8px 0",
+    borderBottom: "1px solid var(--paper-alt)",
+    fontSize: "13px",
+  },
+  reviewLabel: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "11.5px",
+    color: "var(--stone)",
+    flexShrink: 0,
+    width: "110px",
+    paddingTop: "1px",
+  },
+  reviewContent: {
+    flex: 1,
+    textAlign: "right",
+  },
+  pendingText: {
+    fontSize: "12px",
+    color: "var(--stone-light)",
+    fontStyle: "italic",
+  },
+  noDocsText: {
+    fontSize: "12px",
+    color: "#B5650B",
+    fontStyle: "italic",
+  },
+  downloadLink: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "4px",
+    fontSize: "12px",
+    fontFamily: "'IBM Plex Mono', monospace",
+    color: "var(--red)",
+    textDecoration: "none",
+    fontWeight: 600,
+  },
+};
+
+// ── Review document sub-section ───────────────────────────────────────────────
+// Renders one review type's documents (or its status message) inside the panel.
+function ReviewTypeRow({ label, reviewSection }) {
+  const renderContent = () => {
+    if (!reviewSection) {
+      return (
+        <span style={rdStyles.pendingText}>
+          Review in progress, gathering documents
+        </span>
+      );
+    }
+
+    const { status, message, files = [] } = reviewSection;
+
+    if (status === "pending") {
+      return <span style={rdStyles.pendingText}>{message || "Review in progress, gathering documents"}</span>;
+    }
+
+    if (status === "no_docs") {
+      return <span style={rdStyles.noDocsText}>{message}</span>;
+    }
+
+    // status === "complete"
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+        {files.map((f) => (
+          <a
+            key={f.name}
+            href={f.url}
+            download={f.name}
+            target="_blank"
+            rel="noreferrer"
+            aria-label={`Download ${f.name}`}
+            style={rdStyles.downloadLink}
+          >
+            {f.name} ↓
+          </a>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <div style={rdStyles.reviewRow}>
+      <span style={rdStyles.reviewLabel}>{label}</span>
+      <div style={rdStyles.reviewContent}>{renderContent()}</div>
     </div>
   );
 }
@@ -413,11 +550,16 @@ export default function RequestDetail({ request, onClose, onSaved, onRefreshed }
   const it_review = record.it_review || {};
   const flags = record.flags || {};
   const admin = record.admin || {};
+  const review_docs = record.review_docs || {};
 
   // Local override state — starts from whatever is already saved
   const [overrides, setOverrides] = useState({
     ...DEFAULT_OVERRIDES,
     ...(admin.overrides || {}),
+  });
+  const [completions, setCompletions] = useState({
+    ...DEFAULT_COMPLETIONS,
+    ...(admin.review_completions || {}),
   });
   const [overrideReason, setOverrideReason] = useState(admin.override_reason || "");
   const [overriddenBy, setOverriddenBy] = useState(admin.overridden_by || "");
@@ -432,18 +574,18 @@ export default function RequestDetail({ request, onClose, onSaved, onRefreshed }
     overrides.integration_flag !== null;
 
   // Cycle override for a flag: null → true → false → null
-  function handleToggle(label) {
-    const key =
-      label === "ATI Review"
-        ? "ati_flag"
-        : label === "Security Review"
-        ? "security_flag"
-        : "integration_flag";
+  function handleToggle(key) {
     setOverrides((prev) => {
       const cur = prev[key];
       const next = cur === null ? true : cur === true ? false : null;
       return { ...prev, [key]: next };
     });
+  }
+
+  // Mark a review Completed / Remaining. The stored value survives a flag
+  // being overridden off and back on, so no progress is silently lost.
+  function handleToggleCompleted(key) {
+    setCompletions((prev) => ({ ...prev, [key]: !prev[key] }));
   }
 
   function validate() {
@@ -468,6 +610,7 @@ export default function RequestDetail({ request, onClose, onSaved, onRefreshed }
     // Backend expects top-level fields (not nested under "admin").
     const payload = {
       overrides,
+      review_completions: completions,
       override_reason: overrideReason.trim(),
       overridden_by: overriddenBy.trim(),
       admin_notes: adminNotes.trim(),
@@ -516,7 +659,7 @@ export default function RequestDetail({ request, onClose, onSaved, onRefreshed }
               <span
                 style={{
                   ...styles.statusBadge,
-                  background: statusColor(status),
+                  background: C.stone,
                 }}
               >
                 {STATUS_LABELS[status] || status}
@@ -582,6 +725,17 @@ export default function RequestDetail({ request, onClose, onSaved, onRefreshed }
             <Field label="Vendor privacy policy" value={it_review.vendor_privacy_policy_url} />
           </Section>
 
+          {/* ── Review Documents ── */}
+          <Section title="Review Documents">
+            <div style={{ marginBottom: "8px", fontSize: "12.5px", color: "var(--stone)", lineHeight: 1.5 }}>
+              Documents uploaded by ATI, Security (ITSO), and Integration reviewers.
+              Download links expire after 1 hour — refresh the page for a new link if needed.
+            </div>
+            <ReviewTypeRow label="ATI Docs"         reviewSection={review_docs.ati} />
+            <ReviewTypeRow label="ITSO Docs"        reviewSection={review_docs.itso} />
+            <ReviewTypeRow label="Integration Docs" reviewSection={review_docs.integration} />
+          </Section>
+
           {/* ── Computed Flags ── */}
           <Section title="Computed Flags">
             <div style={{ marginBottom: "10px" }}>
@@ -593,25 +747,34 @@ export default function RequestDetail({ request, onClose, onSaved, onRefreshed }
               </span>
             </div>
             <FlagRow
+              flagKey="ati_flag"
               label="ATI Review"
               computedValue={flags.ati_flag === true}
               computedReason={flags.ati_flag_reason || "Not computed yet"}
               overrideValue={overrides.ati_flag}
               onToggle={handleToggle}
+              completed={completions.ati_flag}
+              onToggleCompleted={handleToggleCompleted}
             />
             <FlagRow
-              label="Security Review"
+              flagKey="security_flag"
+              label="ITSO Review"
               computedValue={flags.security_flag === true}
               computedReason={flags.security_flag_reason || "Not computed yet"}
               overrideValue={overrides.security_flag}
               onToggle={handleToggle}
+              completed={completions.security_flag}
+              onToggleCompleted={handleToggleCompleted}
             />
             <FlagRow
+              flagKey="integration_flag"
               label="Integration Review"
               computedValue={flags.integration_flag === true}
               computedReason={flags.integration_flag_reason || "Not computed yet"}
               overrideValue={overrides.integration_flag}
               onToggle={handleToggle}
+              completed={completions.integration_flag}
+              onToggleCompleted={handleToggleCompleted}
             />
           </Section>
 
@@ -847,6 +1010,15 @@ const styles = {
     fontWeight: 700,
     letterSpacing: "0.02em",
     color: C.white,
+  },
+  completeButton: {
+    padding: "4px 10px",
+    borderRadius: "5px",
+    fontSize: "10.5px",
+    fontWeight: 700,
+    letterSpacing: "0.02em",
+    fontFamily: C.mono,
+    whiteSpace: "nowrap",
   },
   toggleButton: {
     padding: "6px 12px",

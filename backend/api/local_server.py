@@ -13,6 +13,12 @@ Then hit http://localhost:8000 -- see README.md for endpoint list + curl example
 """
 
 import json
+import os
+from pathlib import Path
+
+# Load .env before importing handlers so env vars like REVIEW_DOCS_BUCKET are set.
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent / ".env")
 
 import uvicorn
 from fastapi import BackgroundTasks, FastAPI, Request, Response
@@ -28,6 +34,7 @@ from handlers import (
     chatbot_patch,
     create_request,
     get_request,
+    get_review_docs,
     list_requests,
     security_report,
 )
@@ -109,6 +116,12 @@ async def security_report_route(request_id: str, background_tasks: BackgroundTas
 async def admin_patch_route(request: Request, request_id: str):
     event = await _to_event(request, {"id": request_id})
     return _from_lambda_response(admin_patch.handler(event))
+
+
+@app.get("/requests/{request_id}/review-docs")
+async def get_review_docs_route(request: Request, request_id: str):
+    event = await _to_event(request, {"id": request_id})
+    return _from_lambda_response(get_review_docs.handler(event))
 
 
 @app.post("/chatbot/parse")
