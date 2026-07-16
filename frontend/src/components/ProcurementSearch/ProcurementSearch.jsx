@@ -101,6 +101,9 @@ function StatusStepper({ record }) {
             key={s}
             style={{
               ...styles.stepLabel,
+              flex: i < steps.length - 1 ? 1 : "0 0 auto",
+              paddingRight: i < steps.length - 1 ? styles.stepLabel.paddingRight : 0,
+              textAlign: i < steps.length - 1 ? "left" : "right",
               color: i === position ? "var(--ink)" : "var(--stone)",
               fontWeight: i === position ? 700 : 500,
             }}
