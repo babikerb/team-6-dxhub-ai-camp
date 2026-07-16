@@ -472,9 +472,9 @@ describe('AdminDashboard — review dashboard buttons', () => {
   it('renders all three dashboard buttons on every row', async () => {
     await renderDashboard();
     const row = screen.getByText('CampusHealth360').closest('tr');
-    expect(within(row).getByRole('button', { name: 'ATI Dashboard' })).toBeInTheDocument();
-    expect(within(row).getByRole('button', { name: 'Security Dashboard' })).toBeInTheDocument();
-    expect(within(row).getByRole('button', { name: 'Data Integration Dashboard' })).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'ATI' })).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Security' })).toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Data Integration' })).toBeInTheDocument();
   });
 
   it('navigates to that request\'s review dashboard, not the detail panel', async () => {
@@ -482,7 +482,7 @@ describe('AdminDashboard — review dashboard buttons', () => {
     const row = screen.getByText('CampusHealth360').closest('tr');
     const requestId = MOCK_REQUESTS.find((r) => r.requestor.software_name === 'CampusHealth360').request_id;
 
-    fireEvent.click(within(row).getByRole('button', { name: 'ATI Dashboard' }));
+    fireEvent.click(within(row).getByRole('button', { name: 'ATI' }));
 
     expect(mockNavigate).toHaveBeenCalledWith(`/admin/${requestId}/review/ati`);
     // The row itself opens the detail panel; the buttons must not trigger it.
