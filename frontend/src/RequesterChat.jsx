@@ -273,7 +273,10 @@ function visibleSteps(answers) {
 // Computed silently. Never rendered to the requester — staff/admin only.
 // -----------------------------------------------------------------
 export function evaluate(a) {
-  const scopeQualifies = a.scope_of_usage === "Classroom" || a.scope_of_usage === "University";
+  const scopeQualifies =
+    a.scope_of_usage === "Classroom" ||
+    a.scope_of_usage === "College" ||
+    a.scope_of_usage === "University";
   const highUsers = a.estimated_users === "30-100" || a.estimated_users === "100+";
   const ati_flag = highUsers && scopeQualifies;
   const ati_flag_reason = `${a.estimated_users} users, ${a.scope_of_usage} scope`;
