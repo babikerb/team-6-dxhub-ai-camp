@@ -282,8 +282,36 @@ function findFirstStepIndex(answers) {
   return i;
 }
 
+// Renders inline markdown within a single line: **bold**/__bold__,
+// *italic*/_italic_, and `inline code`. Returns an array of strings/nodes.
+function renderInline(text) {
+  const regex = /(\*\*|__)(.+?)\1|(`)(.+?)\3|(\*|_)(.+?)\5/g;
+  const nodes = [];
+  let lastIndex = 0;
+  let match;
+  let key = 0;
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) nodes.push(text.slice(lastIndex, match.index));
+    if (match[1]) {
+      nodes.push(<strong key={key++}>{match[2]}</strong>);
+    } else if (match[3]) {
+      nodes.push(
+        <code key={key++} style={styles.inlineCode}>
+          {match[4]}
+        </code>
+      );
+    } else if (match[5]) {
+      nodes.push(<em key={key++}>{match[6]}</em>);
+    }
+    lastIndex = regex.lastIndex;
+  }
+  if (lastIndex < text.length) nodes.push(text.slice(lastIndex));
+  return nodes;
+}
+
 // Renders a bot message as readable text: numbered/bulleted lines become an
-// indented list with a red marker; blank lines become spacing.
+// indented list with a red marker; blank lines become spacing; inline
+// markdown (bold/italic/code) is rendered within each line.
 function BotText({ text }) {
   const lines = String(text || "").split("\n");
   return (
@@ -295,7 +323,7 @@ function BotText({ text }) {
           return (
             <div key={i} style={styles.botListItem}>
               <span style={styles.botListMarker}>{num[1]}.</span>
-              <span>{num[2]}</span>
+              <span>{renderInline(num[2])}</span>
             </div>
           );
         }
@@ -303,14 +331,14 @@ function BotText({ text }) {
           return (
             <div key={i} style={styles.botListItem}>
               <span style={styles.botListMarker}>•</span>
-              <span>{bullet[1]}</span>
+              <span>{renderInline(bullet[1])}</span>
             </div>
           );
         }
         if (line.trim() === "") return <div key={i} style={{ height: "7px" }} />;
         return (
           <div key={i} style={{ marginBottom: "2px" }}>
-            {line}
+            {renderInline(line)}
           </div>
         );
       })}
@@ -966,6 +994,14 @@ const styles = {
     fontWeight: 700,
     minWidth: "18px",
     flexShrink: 0,
+  },
+  inlineCode: {
+    fontFamily: "'IBM Plex Mono', monospace",
+    fontSize: "0.9em",
+    background: "var(--paper-alt)",
+    border: "1px solid var(--line)",
+    borderRadius: "3px",
+    padding: "1px 5px",
   },
   orChoose: {
     padding: "14px 28px 6px",
