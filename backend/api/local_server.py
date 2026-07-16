@@ -15,11 +15,12 @@ Then hit http://localhost:8000 -- see README.md for endpoint list + curl example
 import json
 
 import uvicorn
-from fastapi import FastAPI, Request, Response
+from fastapi import BackgroundTasks, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from handlers import (
     admin_patch,
+    ati_report,
     chatbot_assist,
     chatbot_converse,
     chatbot_find_document,
@@ -120,6 +121,26 @@ async def chatbot_match_route(request: Request):
 async def chatbot_identify_route(request: Request):
     event = await _to_event(request)
     return _from_lambda_response(chatbot_identify.handler(event))
+
+
+@app.post("/requests/{request_id}/ati-documents")
+async def ati_documents_route(request_id: str):
+    """Step 1 — retrieve vendor documents. Synchronous: web searches only."""
+    event = {"pathParameters": {"id": request_id}}
+    return _from_lambda_response(ati_report.documents_handler(event))
+
+
+@app.post("/requests/{request_id}/ati-report")
+async def ati_report_route(request_id: str, background_tasks: BackgroundTasks):
+    """Step 2 — generate the draft review."""
+    event = {"pathParameters": {"id": request_id}}
+    lambda_response = ati_report.handler(event)
+    if lambda_response["statusCode"] == 202:
+        # handler() marked it pending and (in real Lambda only) fired the async
+        # worker invoke, which no-ops locally -- background it here instead so
+        # local dev actually completes the report.
+        background_tasks.add_task(ati_report.generate_and_save, request_id)
+    return _from_lambda_response(lambda_response)
 
 
 @app.post("/chatbot/find-document")

@@ -24,6 +24,12 @@ boto3==1.43.48
 # this is missing those features silently find nothing instead of erroring.
 ddgs==9.14.4
 
+# Reads VPAT PDFs in ati_report_generator. Without it, PDF VPATs come back as
+# unreadable and the report correctly reports them as located-but-not-reviewed
+# -- accurate, but much less useful. Pin matches mrunal-backend's
+# backend/api/requirements.txt so the two don't diverge before they're merged.
+pypdf>=6.0.0
+
 # Reads the internal ServiceNow request export in build_precedent_index.py.
 # Only needed to (re)build the precedent index, not to run the API.
 openpyxl==3.1.5

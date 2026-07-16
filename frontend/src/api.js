@@ -32,6 +32,29 @@ export async function getRequest(requestId) {
 }
 
 /**
+ * POST /requests/{id}/ati-documents — Step 1 of the ATI review: find the
+ * vendor's VPAT / privacy policy / terms. Synchronous; returns the updated
+ * record with ati_review.documents populated.
+ */
+export async function retrieveAtiDocuments(requestId) {
+  return request(`/requests/${encodeURIComponent(requestId)}/ati-documents`, {
+    method: "POST",
+  });
+}
+
+/**
+ * POST /requests/{id}/ati-report — Step 2: generate the draft ATI review.
+ * Returns 202 with ati_review.status = "pending"; the report lands
+ * asynchronously (it reads the VPAT and calls Bedrock, well past any
+ * request timeout). Poll getRequest until status is complete/failed.
+ */
+export async function generateAtiReport(requestId) {
+  return request(`/requests/${encodeURIComponent(requestId)}/ati-report`, {
+    method: "POST",
+  });
+}
+
+/**
  * GET /requests — list with optional filters.
  * Returns { items, count }.
  */

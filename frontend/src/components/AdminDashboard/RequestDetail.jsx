@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { patchAdmin } from "../../api.js";
+import { patchAdmin, retrieveAtiDocuments, generateAtiReport, getRequest } from "../../api.js";
 import { STATUS_ORDER, STATUS_LABELS, STATUS_DESCRIPTIONS, statusColor } from "./statusConfig.js";
 
 // ── Design tokens (matches RequesterChat.jsx / IntakeForm.jsx palette + type system) ──
@@ -57,6 +57,170 @@ function Field({ label, value }) {
       <span style={styles.fieldLabel}>{label}</span>
       <span style={styles.fieldValue}>{display}</span>
     </div>
+  );
+}
+
+// ── ATI draft review panel ────────────────────────────────────────────────────
+// Two buttons, in order, because the reviewer's own workflow is two steps:
+// find the documents, then review them. On a renewal the first step often
+// answers the question by itself ("same VPAT as last year"), which is why it's
+// separate rather than folded into generation.
+function AtiReviewPanel({ request, onUpdated }) {
+  const ati = request.ati_review || {};
+  const isRenewal = (request.requestor || {}).purchase_type === "renewal";
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+
+  const docs = ati.documents || {};
+  const hasDocs = Object.keys(docs).length > 0;
+  const pending = ati.status === "pending" || busy === "report";
+
+  async function handleRetrieve() {
+    setBusy("documents");
+    setError("");
+    try {
+      onUpdated(await retrieveAtiDocuments(request.request_id));
+    } catch (e) {
+      setError(e.message || "Could not retrieve documents.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function handleGenerate() {
+    setBusy("report");
+    setError("");
+    try {
+      await generateAtiReport(request.request_id);
+      // The report reads the VPAT and calls Bedrock — well over a minute in
+      // practice — so poll rather than waiting on the request.
+      for (let i = 0; i < 80; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const fresh = await getRequest(request.request_id);
+        const status = (fresh.ati_review || {}).status;
+        if (status === "complete" || status === "failed") {
+          onUpdated(fresh);
+          if (status === "failed") {
+            setError((fresh.ati_review || {}).error || "Report generation failed.");
+          }
+          return;
+        }
+      }
+      setError("Report is taking longer than expected. Reopen this request to check.");
+    } catch (e) {
+      setError(e.message || "Could not generate the report.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  return (
+    <Section title="ATI Accessibility Review">
+      {isRenewal && (
+        <div style={styles.renewalNote}>
+          Renewal — SDSU has reviewed this product before. Start with the existing
+          documents; they are often unchanged since the last review.
+        </div>
+      )}
+
+      <div style={styles.atiSteps}>
+        <button
+          type="button"
+          onClick={handleRetrieve}
+          disabled={busy !== ""}
+          style={{ ...styles.atiButton, ...(busy !== "" ? styles.atiButtonDisabled : null) }}
+        >
+          {busy === "documents" ? "Searching…" : "Step 1: Retrieve Existing Documents"}
+        </button>
+        <button
+          type="button"
+          onClick={handleGenerate}
+          disabled={busy !== "" || !hasDocs}
+          title={hasDocs ? "" : "Retrieve the documents first"}
+          style={{
+            ...styles.atiButton,
+            ...styles.atiButtonPrimary,
+            ...(busy !== "" || !hasDocs ? styles.atiButtonDisabled : null),
+          }}
+        >
+          {pending ? "Generating… (up to 2 min)" : "Step 2: Generate Draft ATI Review"}
+        </button>
+      </div>
+
+      {error && <div style={styles.atiError}>{error}</div>}
+
+      {hasDocs && (
+        <div style={styles.atiDocs}>
+          {Object.entries(docs).map(([type, info]) => (
+            <div key={type} style={styles.atiDocRow}>
+              <span style={styles.atiDocLabel}>{type.replace(/_/g, " ")}</span>
+              {info.url ? (
+                <span style={styles.atiDocValue}>
+                  <a href={info.url} target="_blank" rel="noreferrer" style={styles.atiDocLink}>
+                    {info.url.length > 60 ? `${info.url.slice(0, 60)}…` : info.url}
+                  </a>
+                  {/* Whether the text was actually read decides how much the
+                      report below is worth — say it plainly. */}
+                  <span style={styles.atiDocMeta}>
+                    {info.contents_reviewed === true
+                      ? "contents read"
+                      : info.contents_reviewed === false
+                      ? "link only — not read, reviewer must open"
+                      : ""}
+                  </span>
+                </span>
+              ) : (
+                <span style={styles.atiDocMissing}>not found — {info.note || "no public document"}</span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {ati.status === "complete" && (
+        <div style={styles.atiReport}>
+          <div style={styles.atiRiskRow}>
+            <span style={styles.fieldLabel}>Draft risk tier</span>
+            <span style={{ ...styles.atiRisk, color: riskColor(ati.risk_tier) }}>
+              {ati.risk_tier || "Unknown"}
+            </span>
+            <span style={styles.atiGenerated}>
+              generated {ati.generated_at ? new Date(ati.generated_at).toLocaleString() : ""}
+            </span>
+          </div>
+
+          <div style={styles.atiDraftBanner}>
+            Draft for reviewer edit — not a decision. Phase 4 (hands-on manual testing)
+            is not included and must be performed by a person.
+          </div>
+
+          {(ati.reviewer_actions || []).length > 0 && (
+            <>
+              <div style={styles.atiSubTitle}>What you still need to do</div>
+              <ul style={styles.atiList}>
+                {ati.reviewer_actions.map((a, i) => (
+                  <li key={i} style={styles.atiListItem}>{a}</li>
+                ))}
+              </ul>
+            </>
+          )}
+
+          <div style={styles.atiSubTitle}>Draft review</div>
+          <pre style={styles.atiBody}>{ati.report_body}</pre>
+
+          {ati.draft_message_to_requester && (
+            <>
+              <div style={styles.atiSubTitle}>Draft message to the requester</div>
+              <pre style={styles.atiBody}>{ati.draft_message_to_requester}</pre>
+            </>
+          )}
+
+          {(ati.precedent || {}).found && (
+            <div style={styles.atiPrecedent}>{ati.precedent.summary}</div>
+          )}
+        </div>
+      )}
+    </Section>
   );
 }
 
@@ -128,7 +292,7 @@ function FlagRow({ label, computedValue, computedReason, overrideValue, onToggle
 }
 
 // ── Main component ────────────────────────────────────────────────────────────
-export default function RequestDetail({ request, onClose, onSaved }) {
+export default function RequestDetail({ request, onClose, onSaved, onUpdated }) {
   const requestor = request.requestor || {};
   const it_review = request.it_review || {};
   const flags = request.flags || {};
@@ -301,6 +465,9 @@ export default function RequestDetail({ request, onClose, onSaved }) {
             <Field label="Compliance note" value={it_review.compliance_note} />
             <Field label="Vendor privacy policy" value={it_review.vendor_privacy_policy_url} />
           </Section>
+
+          {/* ── ATI draft review (Step 1 documents → Step 2 draft) ── */}
+          <AtiReviewPanel request={request} onUpdated={onUpdated || onSaved} />
 
           {/* ── Computed Flags ── */}
           <Section title="Computed Flags">
@@ -504,6 +671,173 @@ const styles = {
     fontFamily: C.mono,
     fontSize: "12px",
     color: C.stone,
+  },
+  renewalNote: {
+    fontFamily: C.mono,
+    fontSize: "11.5px",
+    lineHeight: 1.5,
+    color: C.stone,
+    backgroundColor: C.paperAlt,
+    borderLeft: `3px solid ${C.stoneLight}`,
+    paddingTop: "8px",
+    paddingRight: "10px",
+    paddingBottom: "8px",
+    paddingLeft: "10px",
+    marginBottom: "12px",
+  },
+  atiSteps: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "10px",
+    marginBottom: "12px",
+  },
+  atiButton: {
+    fontFamily: C.mono,
+    fontSize: "12px",
+    fontWeight: 700,
+    color: C.ink,
+    backgroundColor: C.white,
+    border: `1px solid ${C.line}`,
+    paddingTop: "10px",
+    paddingRight: "14px",
+    paddingBottom: "10px",
+    paddingLeft: "14px",
+    cursor: "pointer",
+  },
+  atiButtonPrimary: {
+    color: C.white,
+    backgroundColor: C.ink,
+    borderColor: C.ink,
+  },
+  atiButtonDisabled: {
+    opacity: 0.45,
+    cursor: "not-allowed",
+  },
+  atiError: {
+    fontFamily: C.mono,
+    fontSize: "11.5px",
+    color: C.red,
+    marginBottom: "10px",
+  },
+  atiDocs: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
+    marginBottom: "14px",
+  },
+  atiDocRow: {
+    display: "flex",
+    alignItems: "baseline",
+    gap: "10px",
+  },
+  atiDocLabel: {
+    fontFamily: C.mono,
+    fontSize: "11px",
+    textTransform: "uppercase",
+    color: C.stone,
+    width: "130px",
+    flexShrink: 0,
+  },
+  atiDocValue: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "2px",
+    minWidth: 0,
+  },
+  atiDocLink: {
+    fontSize: "12.5px",
+    color: C.red,
+    wordBreak: "break-all",
+  },
+  atiDocMeta: {
+    fontFamily: C.mono,
+    fontSize: "10.5px",
+    color: C.stoneLight,
+  },
+  atiDocMissing: {
+    fontSize: "12.5px",
+    color: C.stoneLight,
+    fontStyle: "italic",
+  },
+  atiReport: {
+    borderTop: `1px solid ${C.line}`,
+    paddingTop: "14px",
+  },
+  atiRiskRow: {
+    display: "flex",
+    alignItems: "baseline",
+    gap: "10px",
+    marginBottom: "10px",
+  },
+  atiRisk: {
+    fontFamily: C.mono,
+    fontSize: "14px",
+    fontWeight: 700,
+  },
+  atiGenerated: {
+    fontFamily: C.mono,
+    fontSize: "10.5px",
+    color: C.stoneLight,
+    marginLeft: "auto",
+  },
+  atiDraftBanner: {
+    fontFamily: C.mono,
+    fontSize: "11px",
+    lineHeight: 1.5,
+    color: C.ink,
+    backgroundColor: C.paperAlt,
+    borderLeft: `3px solid ${C.red}`,
+    paddingTop: "8px",
+    paddingRight: "10px",
+    paddingBottom: "8px",
+    paddingLeft: "10px",
+    marginBottom: "14px",
+  },
+  atiSubTitle: {
+    fontFamily: C.mono,
+    fontSize: "11px",
+    fontWeight: 700,
+    textTransform: "uppercase",
+    letterSpacing: "0.05em",
+    color: C.stone,
+    marginBottom: "6px",
+    marginTop: "12px",
+  },
+  atiList: {
+    marginTop: 0,
+    marginBottom: 0,
+    paddingLeft: "18px",
+  },
+  atiListItem: {
+    fontSize: "12.5px",
+    lineHeight: 1.5,
+    color: C.ink,
+    marginBottom: "5px",
+  },
+  atiBody: {
+    fontFamily: C.sans,
+    fontSize: "12.5px",
+    lineHeight: 1.55,
+    color: C.ink,
+    backgroundColor: C.paperAlt,
+    border: `1px solid ${C.line}`,
+    paddingTop: "12px",
+    paddingRight: "14px",
+    paddingBottom: "12px",
+    paddingLeft: "14px",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    maxHeight: "420px",
+    overflowY: "auto",
+    marginTop: 0,
+    marginBottom: 0,
+  },
+  atiPrecedent: {
+    fontFamily: C.mono,
+    fontSize: "11px",
+    lineHeight: 1.5,
+    color: C.stone,
+    marginTop: "12px",
   },
   flagRow: {
     display: "flex",

@@ -148,10 +148,17 @@ export default function AdminDashboard() {
     return true;
   });
 
-  function handleSaved(updatedRequest) {
+  // Refresh a request in the list but keep the detail panel open. Used by
+  // in-panel work (retrieving ATI documents, generating the draft review),
+  // where closing the panel would throw the reviewer out mid-task.
+  function handleUpdated(updatedRequest) {
     setRequests((prev) =>
       prev.map((r) => (r.request_id === updatedRequest.request_id ? updatedRequest : r))
     );
+  }
+
+  function handleSaved(updatedRequest) {
+    handleUpdated(updatedRequest);
     setSelectedId(null);
   }
 
@@ -350,6 +357,7 @@ export default function AdminDashboard() {
           request={selected}
           onClose={() => setSelectedId(null)}
           onSaved={handleSaved}
+          onUpdated={handleUpdated}
         />
       )}
     </div>
