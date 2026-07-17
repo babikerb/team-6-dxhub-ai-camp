@@ -23,9 +23,11 @@ Nothing here is SDSU-secret; safe for the public repo. AWS creds are read from
 the environment / ~/.aws (never committed).
 """
 
+import io
 import json
 import os
 import re
+import urllib.request
 from pathlib import Path
 
 _HERE = Path(__file__).parent
@@ -703,6 +705,162 @@ def _web_search(query, max_results=5):
     return out
 
 
+# ---- Fetching and validating vendor documents -------------------------------
+# Lives here, beside find_document(), because BOTH report generators call
+# find_document and both need the same answer to "is this actually the
+# document?". This logic previously existed only inside ati_report_generator,
+# so the security report had no way to validate anything it found.
+
+MAX_DOC_CHARS = 12000
+MAX_DOC_BYTES = 5_000_000
+MAX_PDF_PAGES = 40
+_USER_AGENT = "SDSU-SoftwareRequest-Review/1.0"
+
+# Enough text that a real policy page can't be confused with a JS shell. The
+# page that started this returned 22 characters ("TikTok - Make Your Day"); the
+# real Terms of Service returns ~12,000.
+MIN_DOC_CHARS = 600
+
+# How many candidate pages find_document will open before giving up. Each fetch
+# costs a second or two and this runs inside API Gateway's 29s ceiling, so the
+# budget is small on purpose.
+_MAX_DOC_CANDIDATES = 4
+
+# What the real document says and an impostor doesn't. A vendor's own ToS always
+# contains "terms of service" (or "terms of use") in its first screenful; a
+# hashtag page with those words only in its URL does not.
+_DOC_CONTENT_MARKERS = {
+    "privacy_policy": ("privacy policy", "privacy notice", "personal information",
+                       "personal data", "information we collect"),
+    "terms_of_service": ("terms of service", "terms of use", "terms and conditions",
+                         "user agreement"),
+    "vpat": ("vpat", "accessibility conformance", "wcag", "section 508",
+             "voluntary product accessibility"),
+    "hecvat": ("hecvat", "higher education community vendor assessment"),
+    "soc2": ("soc 2", "soc2", "service organization control", "trust services criteria"),
+}
+
+
+def _html_to_text(html, max_chars=MAX_DOC_CHARS):
+    """Minimal dependency-free HTML->text: drop script/style, strip tags."""
+    text = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", html)
+    text = re.sub(r"(?s)<[^>]+>", " ", text)
+    text = text.replace("&nbsp;", " ").replace("&amp;", "&")
+    text = re.sub(r"&[a-zA-Z#0-9]+;", " ", text)
+    return re.sub(r"\s+", " ", text).strip()[:max_chars]
+
+
+def fetch_document_text(url, max_chars=MAX_DOC_CHARS):
+    """Fetch a document and return its text, or None if it can't be read."""
+    if not url:
+        return None
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            ctype = (resp.headers.get("Content-Type") or "").lower()
+            raw = resp.read(MAX_DOC_BYTES)
+    except Exception:  # noqa: BLE001 -- blocked/unreachable is a normal outcome
+        return None
+
+    if "pdf" in ctype or url.lower().endswith(".pdf"):
+        try:
+            from pypdf import PdfReader
+
+            reader = PdfReader(io.BytesIO(raw))
+            pages = [(p.extract_text() or "") for p in reader.pages[:MAX_PDF_PAGES]]
+            return (re.sub(r"\s+", " ", " ".join(pages)).strip())[:max_chars] or None
+        except Exception:  # noqa: BLE001
+            return None
+    try:
+        return _html_to_text(raw.decode("utf-8", errors="replace"), max_chars) or None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def document_looks_right(text, doc_type, vendor_name=None):
+    """Does the fetched text read like this vendor's copy of this document?
+
+    Three things have to hold, because each catches a different impostor we
+    actually shipped:
+
+      1. Substantial. TikTok's own domain hosts
+         /discover/tick-tock-2026-terms-of-service -- a user-generated hashtag
+         page that fetches fine and returns 22 characters. It passed the domain
+         check and reached a reviewer as the Terms of Service.
+
+      2. The right KIND of document -- it says "terms of service" somewhere near
+         the top, not just in its URL.
+
+      3. About the right VENDOR. deque.com's "what is a VPAT" explainer is long
+         and says "VPAT" constantly, and was returned as TikTok's VPAT. It never
+         says "TikTok". A vendor's own policy always names the vendor.
+
+    Privacy policies and terms are always public and always substantial, so
+    short / empty / blocked means we picked the WRONG page -- not that the vendor
+    publishes none. Conflating those two is what produced confident citations to
+    a hashtag page and to a competitor's marketing page.
+    """
+    if not text or len(text) < MIN_DOC_CHARS:
+        return False
+    head = text[:6000].lower()
+
+    markers = _DOC_CONTENT_MARKERS.get(doc_type)
+    if markers and not any(m in head for m in markers):
+        return False
+
+    # HECVATs are brokered by the community (educause.edu) rather than
+    # self-published, so the vendor's name may legitimately be the only thing
+    # tying the document to them -- but it will be in there. Everything else
+    # here is self-published and always names its owner.
+    if vendor_name:
+        token = re.sub(r"[^a-z0-9]", "", vendor_name.lower().split(" ")[0])
+        if len(token) >= 4 and token not in re.sub(r"[^a-z0-9]", "", text[:12000].lower()):
+            return False
+    return True
+
+
+# Documents a vendor publishes on its own site. A third party's page ABOUT the
+# vendor is not the vendor's policy: districtcheck.io/tools/canva-for-education
+# is a real page, really about Canva, and is not Canva's VPAT. HECVAT is
+# deliberately absent -- those are brokered by the community (educause.edu), so
+# requiring the vendor's domain would reject the real thing.
+_SELF_PUBLISHED_DOCS = {"privacy_policy", "terms_of_service", "vpat"}
+
+
+def _is_vendor_owned(url, vendor_name, vendor_website=None):
+    """Is this URL on the vendor's own domain?
+
+    Prefers the vendor_website the requester gave us. Without one, falls back to
+    asking whether the registrable domain contains the vendor's first name token
+    -- canva.com and content-management-files.canva.com both contain "canva";
+    districtcheck.io and deque.com don't. Token matching rather than
+    "<name>.com" because plenty of vendors aren't .com (zotero.org).
+    """
+    domain = _registrable_domain(url)
+    if not domain:
+        return False
+    if vendor_website:
+        site = vendor_website if "//" in vendor_website else f"https://{vendor_website}"
+        vendor_domain = _registrable_domain(site)
+        if vendor_domain:
+            return domain == vendor_domain
+    token = re.sub(r"[^a-z0-9]", "", (vendor_name or "").lower().split(" ")[0])
+    if len(token) < 4:
+        return True  # too short to match on; other guards carry it
+    return token in re.sub(r"[^a-z0-9]", "", domain)
+
+
+def url_or_none(value):
+    """Return value only if it is actually an http(s) URL.
+
+    Requesters answer these questions in free text -- "no", "not sure", "n/a".
+    Those were stored and carried forward as document URLs: the TikTok request
+    reached the ATI report with privacy_policy set to the literal string "no".
+    """
+    v = str(value or "").strip()
+    return v if v.lower().startswith(("http://", "https://")) else None
+
+
 def _strip_markdown(text):
     """Remove ALL markdown. For destinations that render plain text and nothing
     else: the software one-liner in the intake form, catalog match reasons, and
@@ -1057,7 +1215,7 @@ an authoritative public copy. If none of the results is clearly that document,
 set found=false. Never invent a URL; only choose from the results shown."""
 
 
-def find_document(vendor_name, doc_type="privacy_policy"):
+def find_document(vendor_name, doc_type="privacy_policy", vendor_website=None):
     """Find a public vendor document. Returns
     {found, url, title, doc_type, note, results}."""
     vendor_name = (vendor_name or "").strip()
@@ -1111,12 +1269,44 @@ def find_document(vendor_name, doc_type="privacy_policy"):
     url = pick.get("url") if pick.get("found") else None
     # Domain guard: only trust a URL whose domain actually appeared in results.
     allowed = {_registrable_domain(r["url"]) for r in results}
-    if url and _registrable_domain(url) in allowed:
-        title = next((r["title"] for r in results if r["url"] == url), "")
-        return {"found": True, "url": url, "title": title, "doc_type": doc_type,
-                "note": str(pick.get("note", ""))[:300], "results": results}
-    return {**empty, "note": str(pick.get("note", "")) or "No confident match in results.",
-            "results": results}
+    if url and _registrable_domain(url) not in allowed:
+        url = None
+
+    # Content guard: open the page and check it reads like the document we asked
+    # for. The domain guard passed tiktok.com/discover/tick-tock-2026-terms-of-
+    # service -- right domain, wrong page, 22 characters of nothing. If the
+    # model's pick doesn't verify, try the other same-domain results before
+    # giving up: the correct page is usually in the list, just not ranked first.
+    candidates = ([url] if url else []) + [
+        r["url"] for r in results
+        if r["url"] != url and _registrable_domain(r["url"]) in allowed
+    ]
+    # Self-published documents must be on the vendor's own site. Without this,
+    # "Canva VPAT" resolves to a third-party directory page about Canva.
+    if doc_type in _SELF_PUBLISHED_DOCS:
+        candidates = [c for c in candidates if _is_vendor_owned(c, vendor_name, vendor_website)]
+    checked = 0
+    for cand in candidates:
+        if checked >= _MAX_DOC_CANDIDATES:
+            break
+        checked += 1
+        text = fetch_document_text(cand)
+        if document_looks_right(text, doc_type, vendor_name):
+            title = next((r["title"] for r in results if r["url"] == cand), "")
+            note = str(pick.get("note", ""))[:300] if cand == url else (
+                "Model's first pick didn't read like the document; this result did."
+            )
+            return {"found": True, "url": cand, "title": title, "doc_type": doc_type,
+                    "note": note, "text": text, "results": results}
+
+    # Nothing verified. Say so plainly -- a reviewer attaching the right link is
+    # a better outcome than citing a page nobody read.
+    note = (
+        f"Found candidate pages but none read like a {label}; a reviewer should attach it."
+        if candidates else
+        (str(pick.get("note", "")) or "No confident match in results.")
+    )
+    return {**empty, "note": note, "results": results}
 
 
 # ---- Software-name matching against the SDSU catalog -----------------------

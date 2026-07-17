@@ -25,23 +25,14 @@ Two entry points, matching the two buttons in the dashboard:
         decides success vs failure.
 """
 
-import io
 import json
 import os
 import re
 import sys
-import urllib.request
 from pathlib import Path
 
 _HERE = Path(__file__).parent
 _PROMPT_FILE = _HERE / "ati_report_prompt.md"
-
-# A VPAT runs long; enough to cover the conformance tables without blowing the
-# context or the Lambda timeout.
-MAX_DOC_CHARS = 12000
-MAX_DOC_BYTES = 5_000_000
-MAX_PDF_PAGES = 40
-_USER_AGENT = "SDSU-SoftwareRequest-ATIReview/1.0"
 
 MODE = os.environ.get("CHATBOT_LLM_MODE", "bedrock")
 MODEL_ID = os.environ.get("CHATBOT_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
@@ -67,52 +58,11 @@ DOC_TYPES_FROM_IT_REVIEW = {
 }
 
 
-def _html_to_text(html, max_chars=MAX_DOC_CHARS):
-    """Minimal dependency-free HTML->text. Same approach as
-    security_report_generator._html_to_text -- consolidate the two when that
-    branch merges; duplicated here only because it isn't merged yet."""
-    text = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", html)
-    text = re.sub(r"(?s)<[^>]+>", " ", text)
-    text = text.replace("&nbsp;", " ").replace("&amp;", "&")
-    text = re.sub(r"&[a-zA-Z#0-9]+;", " ", text)
-    return re.sub(r"\s+", " ", text).strip()[:max_chars]
-
-
-def _fetch_text(url, max_chars=MAX_DOC_CHARS):
-    """Fetch a document and return its text, or None.
-
-    This is load-bearing for honesty, not a nice-to-have. Passing the model a
-    VPAT *URL* without its contents produced a review that confidently
-    described "WCAG 2.1 AA, full conformance claimed" -- inferred entirely from
-    the filename VPAT2.4WCAGCanva.pdf, having read nothing. Fabricated
-    conformance data is the worst possible output of an accessibility review,
-    so Phase 2 gets the real text or the prompt is told it has none.
-    """
-    if not url:
-        return None
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            ctype = (resp.headers.get("Content-Type") or "").lower()
-            raw = resp.read(MAX_DOC_BYTES)
-    except Exception:  # noqa: BLE001 -- unreachable vendor doc is a normal outcome
-        return None
-
-    if "pdf" in ctype or url.lower().endswith(".pdf"):
-        try:
-            from pypdf import PdfReader
-
-            reader = PdfReader(io.BytesIO(raw))
-            pages = [(p.extract_text() or "") for p in reader.pages[:MAX_PDF_PAGES]]
-            text = re.sub(r"\s+", " ", " ".join(pages)).strip()
-            return text[:max_chars] or None
-        except Exception:  # noqa: BLE001
-            return None
-
-    try:
-        return _html_to_text(raw.decode("utf-8", errors="replace"), max_chars) or None
-    except Exception:  # noqa: BLE001
-        return None
+# Fetching lives in parse.py now, beside find_document(), so the ATI report and
+# the security report read pages the same way and validate them the same way.
+# This module keeps the name it already used.
+_fetch_text = chatbot_parse.fetch_document_text
+_html_to_text = chatbot_parse._html_to_text
 
 
 def _software_name(record):
@@ -126,10 +76,14 @@ def _is_renewal(record):
 def retrieve_documents(record):
     """Step 1 -- find the vendor documents this review needs.
 
-    Priority per document:
-      1. requester_upload / requester_link already archived in S3
-      2. requester-provided URL from the chatbot intake
-      3. public web search / accessibility-page handoff
+    Priority per document (each stops at the first that resolves) -- deliberately
+    the same ladder as security_report_generator._gather_documents(), so a
+    reviewer correcting a bad link does it the same way for either review:
+      1. requester_upload / requester_link -- archived in S3 via the upload page
+      2. admin_attached      -- a reviewer pasted a link (PATCH .../admin)
+      3. requester_provided  -- supplied in the chatbot intake
+      4. auto_search         -- find_document(), which verifies by reading the page
+      5. not_found           -- nothing resolved; a human attaches it
 
     Returns {documents: {type: {url, source, note, s3_key?}}, software, is_renewal}.
     Never raises on a single document failing: a missing VPAT is a normal,
@@ -138,6 +92,7 @@ def retrieve_documents(record):
     software = _software_name(record)
     vendor_website = ((record.get("requestor") or {}).get("vendor_website") or "").strip()
     it_review = record.get("it_review") or {}
+    attached = (record.get("admin") or {}).get("attached_documents") or {}
     uploaded = s3_documents.load_requester_evidence(record, ATI_DOC_TYPES)
 
     documents = {}
@@ -153,7 +108,24 @@ def retrieve_documents(record):
             }
             continue
 
-        known = (it_review.get(DOC_TYPES_FROM_IT_REVIEW.get(doc_type, "")) or "").strip()
+        # A reviewer's own link outranks anything we could search for -- they
+        # looked at it. This is the correction path when auto-search gets it
+        # wrong. The "Attach Documents" control in the detail panel already
+        # writes here and already offers vpat; ATI simply never read it.
+        admin_url = chatbot_parse.url_or_none(attached.get(doc_type))
+        if admin_url:
+            documents[doc_type] = {
+                "url": admin_url,
+                "source": "admin_attached",
+                "note": "Attached by a reviewer.",
+            }
+            continue
+
+        # url_or_none, not a truthiness check: these are free-text answers, and
+        # "no" was reaching the report as a privacy-policy URL.
+        known = chatbot_parse.url_or_none(
+            it_review.get(DOC_TYPES_FROM_IT_REVIEW.get(doc_type, ""))
+        )
         if known:
             documents[doc_type] = {
                 "url": known,
@@ -171,7 +143,7 @@ def retrieve_documents(record):
         # once turned a wrong-arity call into a polite "document not found",
         # which reads identically to a vendor genuinely having no VPAT.
         try:
-            found = chatbot_parse.find_document(software, doc_type)
+            found = chatbot_parse.find_document(software, doc_type, vendor_website)
         except (TypeError, AttributeError, NameError):
             raise
         except Exception as exc:  # noqa: BLE001
@@ -183,6 +155,9 @@ def retrieve_documents(record):
         if found.get("url"):
             documents[doc_type] = {
                 "url": found["url"], "source": "web_search", "note": found.get("note") or "",
+                # find_document already fetched and verified this page; reuse the
+                # text instead of asking the vendor for it twice.
+                "text": found.get("text"),
             }
             continue
 
