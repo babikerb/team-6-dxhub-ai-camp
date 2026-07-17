@@ -1,0 +1,20 @@
+# SAM deploy defaults for the production stack. Run from backend/api:
+#   sam build && sam deploy --profile sdsu-dxhub
+# Keeping FrontendBaseUrl here prevents deploys from silently reverting email
+# links to localhost (the template default, meant for local dev).
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "sdsu-software-request-api"
+region = "us-west-2"
+resolve_s3 = true
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = false
+parameter_overrides = [
+    "SoftwareRequestsTableName=SoftwareRequests",
+    "DataBucketName=dxhub-camp-2026-sdsu-software-request-and-institutional-c7fe61",
+    "ReviewDocsBucketName=dxhub-camp-2026-sdsu-software-request-and-institutional-c7fe61",
+    "SesSourceEmail=sdsusoftwarerequest@gmail.com",
+    "FrontendBaseUrl=https://production.d366kx81tdlj3j.amplifyapp.com",
+    "ReminderDelayMinutes=5",
+]
